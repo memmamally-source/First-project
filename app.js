@@ -183,6 +183,7 @@
           journal: { target: str(j.target), submittedOn: date(j.submittedOn), revisionDue: date(j.revisionDue) },
           notes: str(p.notes),
           ownerId: str(p.ownerId),
+          example: !!p.example || EXAMPLE_TITLES.includes(str(p.title)),
           createdAt: str(p.createdAt) || new Date().toISOString(),
           updatedAt: str(p.updatedAt) || new Date().toISOString(),
         };
@@ -225,6 +226,15 @@
     const pending = pendingOwners(p);
     return pending.length ? `Waiting for ${joinNames(pending)}` : 'Everyone has finished';
   }
+
+  // Titles of the built-in examples, so examples loaded before they were flagged can still be found.
+  const EXAMPLE_TITLES = [
+    'Exercise interventions for chronic low back pain: systematic review',
+    'Telehealth adoption in rural primary care: scoping review',
+    'Sleep quality in shift-working nurses: meta-analysis',
+    'Digital mental health apps for adolescents',
+    'Burnout among ICU nurses: national survey',
+  ];
 
   const sameName = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
@@ -379,7 +389,7 @@
     return {
       version: 1,
       me: 'You',
-      projects: [a, b, c, d, e],
+      projects: [a, b, c, d, e].map((p) => ({ ...p, example: true })),
       tasks: [
         newTask(a.id, 'Resolve screening conflicts with Sam', 'You', addDays(today, 5)),
         newTask(a.id, 'Pilot the extraction form', 'Sam Lee', addDays(today, 12)),
@@ -453,6 +463,7 @@
     synced: {}, // project id -> last body sent or received (JSON)
     settingsSynced: '',
     shares: {}, // project id -> number of people it's shared with (owner's view)
+    invites: [], // projects other people have invited me to, waiting for accept/decline
     timer: null,
     saving: false,
     again: false,
@@ -505,6 +516,7 @@
     ]);
     const err = projects.error || members.error || invites.error || settings.error;
     if (err) throw err;
+    await loadInvites();
     const saved = (settings.data && settings.data.data) || {};
     const meta = sb.user.user_metadata || {};
     state = stateFromRows(projects.data, str(saved.me) || str(meta.full_name));
@@ -517,6 +529,81 @@
       const p = state.projects.find((x) => x.id === r.project_id);
       if (p && ownsProject(p) && r.user_id !== myId()) sb.shares[r.project_id] = (sb.shares[r.project_id] || 0) + 1;
     }
+  }
+
+  // Invitations waiting for me. Missing function (database update not run yet) just means none.
+  async function loadInvites() {
+    try {
+      const { data, error } = await sb.client.rpc('my_invites', {});
+      sb.invites = error ? [] : data || [];
+    } catch (e) {
+      sb.invites = [];
+    }
+    updateInviteBadge();
+    return sb.invites;
+  }
+
+  function updateInviteBadge() {
+    const badge = document.getElementById('invite-badge');
+    if (!badge) return;
+    badge.textContent = sb.invites.length;
+    badge.hidden = !sb.invites.length;
+  }
+
+  async function respondInvite(pid, accept) {
+    const inv = sb.invites.find((i) => i.project_id === pid);
+    const { data, error } = await sb.client.rpc('respond_invite', { pid, accept });
+    if (error) return notice("Couldn't answer the invite", error.message || 'Try again in a moment.');
+    if (data === 'gone') notice('Invite withdrawn', 'This invite is no longer available. The owner may have cancelled it.');
+    if (accept && data === 'accepted') {
+      await flushServer();
+      await loadFromServer();
+      ui.flash = `“${inv ? inv.title : 'The project'}” is now on your dashboard.`;
+    } else {
+      await loadInvites();
+    }
+    route();
+  }
+
+  // Checks for new invites every minute while the tab is visible.
+  function watchInvites() {
+    setInterval(async () => {
+      if (!isSb() || !sb.user || document.visibilityState !== 'visible') return;
+      const before = sb.invites.map((i) => i.project_id).join();
+      await loadInvites();
+      if (sb.invites.map((i) => i.project_id).join() === before) return;
+      const active = document.activeElement;
+      const typing = active && app().contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName);
+      if (!typing && !/^#\/project\//.test(location.hash)) route();
+    }, 60000);
+  }
+
+  function invitesHTML() {
+    if (!isSb() || !sb.invites.length) return '';
+    return `
+      <section class="panel invite-panel" aria-label="Invitations">
+        <div class="panel-head"><h2>${sb.invites.length === 1 ? "You've been invited to a project" : `You've been invited to ${sb.invites.length} projects`}</h2></div>
+        <ul class="invites">${sb.invites.map((i) => `
+          <li>
+            <span class="invite-icon" aria-hidden="true">✉</span>
+            <div class="item-body">
+              <div class="item-title">${esc(i.title)}</div>
+              <div class="meta">From ${esc(i.invited_by_name || i.invited_by_email)}${i.invited_by_name ? ` · ${esc(i.invited_by_email)}` : ''}</div>
+            </div>
+            <div class="invite-actions">
+              <button class="btn" data-action="decline-invite" data-pid="${esc(i.project_id)}">Decline</button>
+              <button class="btn primary" data-action="accept-invite" data-pid="${esc(i.project_id)}">Accept</button>
+            </div>
+          </li>`).join('')}
+        </ul>
+      </section>`;
+  }
+
+  function flashHTML() {
+    if (!ui.flash) return '';
+    const html = `<p class="flash" role="status">${esc(ui.flash)}</p>`;
+    ui.flash = '';
+    return html;
   }
 
   function hasUnsavedChanges() {
@@ -624,7 +711,7 @@
       }
       const badge = document.createElement('span');
       badge.className = `access-badge access-${person.role}`;
-      badge.textContent = { owner: 'Owner', member: 'Can edit', invited: 'Invited · not signed up yet' }[person.role] || person.role;
+      badge.textContent = { owner: 'Owner', member: 'Can edit', invited: 'Invited · waiting to accept' }[person.role] || person.role;
       li.append(who, badge);
       if (owner && person.role !== 'owner') {
         const x = document.createElement('button');
@@ -653,10 +740,16 @@
     const { data, error } = await sb.client.rpc('share_project', { pid: p.id, invitee: email });
     if (error) return show(error.message || "Couldn't share. Try again.", true);
     if (data === 'self') return show("That's your own email. Enter a co-author's email.", true);
-    sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
-    show(data === 'invited'
-      ? `${email} doesn't have an account yet. The project will appear on their dashboard as soon as they sign up with this email.`
-      : `Shared. ${email} can now see and edit this project from their dashboard.`);
+    if (data === 'already') return show(`${email} is already on this project.`, true);
+    if (data === 'added') {
+      sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
+      show(`Shared. ${email} can now see and edit this project from their dashboard.`);
+    } else {
+      sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
+      show(data === 'invited_new'
+        ? `Invite sent. ${email} doesn't have an account yet: send them the site link, and the invite will be waiting on their dashboard after they sign up.`
+        : `Invite sent. It will pop up on ${email}'s dashboard for them to accept.`);
+    }
     loadPeople(p.id);
   }
 
@@ -805,6 +898,8 @@
   }
 
   async function signOut() {
+    sb.invites = [];
+    updateInviteBadge();
     if (hasUnsavedChanges()) await flushServer();
     await sb.client.auth.signOut();
     sb.user = null;
@@ -833,6 +928,7 @@
       }
     });
     showAuth('loading');
+    watchInvites();
     const { data } = await sb.client.auth.getSession();
     if (recovering) return showAuth('reset');
     if (data && data.session) startSession(data.session);
@@ -1296,6 +1392,8 @@
     }
     if (!state.projects.length) {
       app().innerHTML = `
+        ${flashHTML()}
+        ${invitesHTML()}
         <section class="empty">
           <h1>Where does every paper stand?</h1>
           <p>Track each project from idea to submission: its stage, team, next action, deadlines and target journal.</p>
@@ -1348,6 +1446,9 @@
         </div>
       </header>
 
+      ${flashHTML()}
+      ${invitesHTML()}
+      ${examplesBanner()}
       <section class="tiles" aria-label="Summary">
         ${tile('Active projects', st.activeCount, `${st.submittedCount} submitted · under review`)}
         ${tile('Overdue', st.overdueCount, st.overdueCount ? 'Past their due date' : 'Nothing overdue', st.overdueCount ? 'tile-critical' : 'tile-good', st.overdueCount ? 'alert' : 'check')}
@@ -1411,6 +1512,7 @@
   function renderBoard() {
     setNav('projects');
     const shown = state.projects.filter((p) => matchesType(p, ui.typeFilter));
+    const sel = ui.selected || new Set();
     const cols = STAGES.map((s) => {
       const ps = shown.filter((p) => p.stage === s.id);
       return `
@@ -1418,8 +1520,10 @@
           <h2>${stageNameHTML(s.id, shown)} <span class="count">${ps.length}</span></h2>
           ${ps.map((p) => {
             const open = openTasks(p.id).length;
+            const tag = ui.selecting ? 'label' : 'a';
             return `
-              <a class="card" href="#/project/${esc(p.id)}">
+              <${tag} class="card${ui.selecting ? ' is-selectable' : ''}${sel.has(p.id) ? ' is-selected' : ''}" ${ui.selecting ? '' : `href="#/project/${esc(p.id)}"`}>
+                ${ui.selecting ? `<input type="checkbox" class="check card-check" data-select="${esc(p.id)}" ${sel.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title)}">` : ''}
                 <div class="card-title">${esc(p.title)}</div>
                 <div class="card-type">${typeBadge(p.studyType)} ${shareChip(p)}</div>
                 ${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}
@@ -1429,18 +1533,26 @@
                   <span class="meta">${open} open task${open === 1 ? '' : 's'}</span>
                   ${dueBadge(p.nextActionDue)}
                 </div>
-              </a>`;
+              </${tag}>`;
           }).join('') || '<p class="muted small">—</p>'}
         </section>`;
     }).join('');
     app().innerHTML = `
+      ${flashHTML()}
       <header class="page-head">
         <h1>Projects</h1>
         <div class="row">
           ${typeFilterControl()}
+          ${state.projects.length ? `<button class="btn" data-action="toggle-select">${ui.selecting ? 'Cancel' : 'Select'}</button>` : ''}
           <button class="btn primary" data-action="new-project">+ New project</button>
         </div>
       </header>
+      ${ui.selecting ? `
+        <div class="select-bar" role="region" aria-label="Selection">
+          <span><strong>${sel.size}</strong> selected · tick the projects to remove from your dashboard</span>
+          <button class="link-btn" data-action="select-all">Select all shown</button>
+          <button class="btn danger-solid small" data-action="remove-selected" ${sel.size ? '' : 'disabled'}>Remove from dashboard</button>
+        </div>` : examplesBanner()}
       <div class="board">${cols}</div>`;
   }
 
@@ -1595,6 +1707,64 @@
       ${namesDatalist('names-project', p)}
       ${namesDatalist('names-all')}`;
     if (isSb()) loadPeople(p.id);
+  }
+
+  // Removes projects from my dashboard: deletes the ones I own, leaves the ones shared with me.
+  async function removeProjects(ids) {
+    const targets = state.projects.filter((p) => ids.includes(p.id));
+    const left = [];
+    for (const p of targets) {
+      if (ownsProject(p)) continue;
+      const res = await sb.client.from('project_members').delete().eq('project_id', p.id).eq('user_id', myId());
+      if (res.error) return notice("Couldn't remove a shared project", res.error.message || 'Try again in a moment.');
+      left.push(p.id);
+      sb.known.delete(p.id);
+      delete sb.synced[p.id];
+    }
+    state.projects = state.projects.filter((p) => !ids.includes(p.id));
+    state.tasks = state.tasks.filter((t) => !ids.includes(t.projectId));
+    ui.selecting = false;
+    ui.selected = new Set();
+    commit();
+    const n = targets.length;
+    ui.flash = `Removed ${n} project${n === 1 ? '' : 's'} from your dashboard.`;
+    route();
+  }
+
+  function confirmRemove(ids) {
+    const targets = state.projects.filter((p) => ids.includes(p.id));
+    if (!targets.length) return;
+    const owned = targets.filter(ownsProject).length;
+    const shared = targets.length - owned;
+    const parts = [];
+    if (owned) parts.push(`${owned} project${owned === 1 ? '' : 's'} you own will be deleted, with their tasks${isSb() ? ', for everyone you shared them with' : ''}.`);
+    if (shared) parts.push(`You'll leave ${shared} shared project${shared === 1 ? '' : 's'}; the owner keeps ${shared === 1 ? 'it' : 'them'}.`);
+    askDialog({
+      title: `Remove ${targets.length} project${targets.length === 1 ? '' : 's'}?`,
+      message: `${parts.join(' ')} This can't be undone.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    }).then((ok) => ok && (isSb() ? removeProjects(ids) : removeLocal(ids)));
+  }
+
+  function removeLocal(ids) {
+    const n = state.projects.filter((p) => ids.includes(p.id)).length;
+    state.projects = state.projects.filter((p) => !ids.includes(p.id));
+    state.tasks = state.tasks.filter((t) => !ids.includes(t.projectId));
+    ui.selecting = false;
+    ui.selected = new Set();
+    ui.flash = `Removed ${n} project${n === 1 ? '' : 's'} from your dashboard.`;
+    commit();
+  }
+
+  function examplesBanner() {
+    const ex = state.projects.filter((p) => p.example && ownsProject(p));
+    if (!ex.length) return '';
+    return `
+      <div class="example-banner" role="note">
+        <span>${ex.length} example project${ex.length === 1 ? ' is' : 's are'} on your dashboard. Remove them when you've finished exploring.</span>
+        <button class="btn small" data-action="remove-examples">Remove examples</button>
+      </div>`;
   }
 
   function sharePanelHTML(p) {
@@ -1839,6 +2009,20 @@
         confirmLabel: 'Leave project',
         danger: true,
       }).then((ok) => ok && leaveProject(p));
+    } else if (a === 'toggle-select') {
+      ui.selecting = !ui.selecting;
+      ui.selected = new Set();
+      route();
+    } else if (a === 'select-all') {
+      ui.selected = new Set(state.projects.filter((x) => matchesType(x, ui.typeFilter)).map((x) => x.id));
+      route();
+    } else if (a === 'remove-selected') {
+      confirmRemove([...(ui.selected || [])]);
+    } else if (a === 'remove-examples') {
+      confirmRemove(state.projects.filter((x) => x.example && ownsProject(x)).map((x) => x.id));
+    } else if (a === 'accept-invite' || a === 'decline-invite') {
+      el.disabled = true;
+      respondInvite(el.dataset.pid, a === 'accept-invite');
     } else if (a === 'sign-out') {
       signOut();
     } else if (a === 'export') {
@@ -1851,6 +2035,13 @@
   // Field edits save in place without re-rendering, so focus isn't lost while moving between inputs.
   function onChange(e) {
     const el = e.target;
+    if (el.dataset.select) {
+      ui.selected = ui.selected || new Set();
+      if (el.checked) ui.selected.add(el.dataset.select);
+      else ui.selected.delete(el.dataset.select);
+      route();
+      return;
+    }
     if (el.dataset.ownerDone !== undefined) {
       const p = currentProject();
       const o = p && p.nextActionOwners[Number(el.dataset.ownerDone)];
