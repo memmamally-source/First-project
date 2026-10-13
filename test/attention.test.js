@@ -94,3 +94,18 @@ test('team roles: legacy free text maps to first author, co-author or contributo
     ['A', 'first', ''], ['B', 'coauthor', 'Supervisor'], ['C', 'contributor', ''], ['D', 'coauthor', ''], ['E', 'coauthor', ''],
   ]);
 });
+
+test('next action with several people shows who we are waiting for', () => {
+  const { waitingText } = require('../app.js');
+  const s = normalizeState({ me: 'ana', projects: [
+    { id: 'a', nextAction: 'Screen full texts', nextActionDue: addDays(TODAY, 2), nextActionOwners: [{ name: 'Ana', done: true }, { name: 'Ben' }, { name: 'Cy' }] },
+    { id: 'b', nextAction: 'Old style', nextActionOwner: 'Ana & Ben' },
+  ] });
+  assert.strictEqual(waitingText(s.projects[0]), 'Waiting for Ben and Cy');
+  assert.deepStrictEqual(s.projects[1].nextActionOwners, [{ name: 'Ana', done: false }, { name: 'Ben', done: false }]);
+  // Ana is done, so the action is no longer hers under "Only mine".
+  assert.strictEqual(attention(s, TODAY, { mineOnly: true }).upcoming.length, 0);
+  assert.strictEqual(attention(s, TODAY).upcoming[0].owner, 'Waiting for Ben and Cy');
+  s.projects[0].nextActionOwners.forEach((o) => { o.done = true; });
+  assert.strictEqual(waitingText(s.projects[0]), 'Everyone has finished');
+});
