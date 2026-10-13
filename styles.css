@@ -422,6 +422,20 @@ textarea { resize: vertical; }
 .type-group:hover { color: var(--accent); }
 .bar-track.is-link { cursor: pointer; }
 
+/* Tappable due labels, tiles and the "what's due" pop-up */
+.due[role="button"] { cursor: pointer; }
+.due[role="button"]:hover { filter: brightness(0.95); text-decoration: underline; }
+.due[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tile-btn { text-align: left; font: inherit; color: inherit; cursor: pointer; width: 100%; }
+.tile-btn:hover { border-color: var(--accent); }
+.tile-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.due-modal { width: min(520px, 100%); max-height: min(80vh, 640px); overflow: auto; }
+.due-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.due-head .icon-btn { font-size: 1.5rem; margin: -4px -6px 0 0; }
+.due-list .item:first-child { border-top: none; }
+.due-date { flex: none; font-size: 0.78rem; font-weight: 600; color: var(--text-2); white-space: nowrap; }
+.due-date.is-late { color: var(--critical-text); }
+
 /* Dialog */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px;

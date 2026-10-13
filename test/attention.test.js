@@ -152,3 +152,12 @@ test('people index: who is on which paper, with roles, tasks and waiting', () =>
   assert.ok(matchesSearch(s.projects[1], 'echo dee'));
   assert.ok(!matchesSearch(s.projects[1], 'pad'));
 });
+
+test('every button in the app has a click handler', () => {
+  const fs = require('fs');
+  const src = fs.readFileSync(require.resolve('../app.js'), 'utf8') + fs.readFileSync(require.resolve('../index.html'), 'utf8');
+  const used = new Set([...src.matchAll(/data-action="([a-z-]+)"/g)].map((m) => m[1]));
+  const handled = new Set([...src.matchAll(/a === '([a-z-]+)'/g)].map((m) => m[1]));
+  const missing = [...used].filter((a) => !handled.has(a));
+  assert.deepStrictEqual(missing, []);
+});

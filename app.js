@@ -1140,7 +1140,7 @@
     if (!iso) return '';
     const d = daysUntil(iso, today());
     const cls = d < 0 ? 'due-overdue' : d <= WEEK_DAYS ? 'due-soon' : 'due-later';
-    return `<span class="due ${cls}" title="${esc(fmtDate(iso))}">${esc(d <= REVISION_WINDOW_DAYS ? relDays(d) : fmtDate(iso))}</span>`;
+    return `<span class="due ${cls}" title="See everything due ${esc(fmtDate(iso))}" role="button" tabindex="0" data-action="show-day" data-date="${esc(iso)}">${esc(d <= REVISION_WINDOW_DAYS ? relDays(d) : fmtDate(iso))}</span>`;
   }
 
   const stagePill = (id, typeId) => `<span class="pill">${esc(stageLabel(id, typeId))}</span>`;
@@ -1265,13 +1265,14 @@
     if (box) box.hidden = true;
   }
 
-  function tile(label, value, sub, mod, icon) {
+  function tile(label, value, sub, mod, icon, dueKind) {
+    const tag = dueKind ? 'button' : 'div';
     return `
-      <div class="tile ${mod || ''}">
+      <${tag} class="tile ${mod || ''}${dueKind ? ' tile-btn' : ''}" ${dueKind ? `data-action="show-due" data-kind="${dueKind}" aria-label="${esc(`${label}: ${value}. Show the list`)}"` : ''}>
         <div class="tile-label">${icon ? ICON[icon] : ''}${esc(label)}</div>
         <div class="tile-value">${esc(value)}</div>
         <div class="tile-sub">${sub}</div>
-      </div>`;
+      </${tag}>`;
   }
 
   // One lane per project; overdue items collapse into a band left of "today".
@@ -1441,6 +1442,103 @@
       </div>`;
   }
 
+  // ---------- "What's due" pop-up ----------
+  // Opened from a calendar day, any due label ("in 3 days") or the Overdue / Due in 7 days tiles.
+  // The list is fixed when it opens, so a task ticked off here stays visible (struck through).
+
+  function openDue(spec) {
+    const t = today();
+    const scoped = spec.filtered ? filterByType(state, ui.typeFilter) : state;
+    const all = deadlines(scoped, t, { mineOnly: spec.filtered && ui.mineOnly });
+    const items = spec.kind === 'day'
+      ? all.filter((i) => i.due === spec.date)
+      : spec.kind === 'overdue'
+        ? all.filter((i) => i.days < 0)
+        : all.filter((i) => i.days >= 0 && i.days <= WEEK_DAYS);
+    if (spec.kind === 'day') {
+      // include tasks already done that day, so the day reads complete
+      for (const task of scoped.tasks) {
+        if (task.done && task.due === spec.date) {
+          const p = scoped.projects.find((x) => x.id === task.projectId);
+          if (p) items.push({ kind: 'task', id: task.id, projectId: p.id, project: p.title, title: task.title, owner: task.owner, due: task.due, days: daysUntil(task.due, t) });
+        }
+      }
+    }
+    ui.due = { ...spec, items, opener: document.activeElement };
+    renderDue();
+  }
+
+  function closeDue() {
+    if (!ui.due) return;
+    const opener = ui.due.opener;
+    ui.due = null;
+    const el = document.getElementById('due-dialog');
+    if (el) el.remove();
+    if (opener && document.contains(opener)) opener.focus();
+  }
+
+  function renderDue() {
+    const d = ui.due;
+    if (!d) return;
+    const t = today();
+    let title;
+    let sub;
+    if (d.kind === 'day') {
+      title = parseISO(d.date).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+      const n = daysUntil(d.date, t);
+      sub = n === 0 ? 'Today' : relDays(n).replace(/^./, (c) => c.toUpperCase());
+    } else if (d.kind === 'overdue') {
+      title = 'Overdue';
+      sub = 'Past their due date';
+    } else {
+      title = 'Due in the next 7 days';
+      sub = `${fmtDate(t)} – ${fmtDate(addDays(t, WEEK_DAYS))}`;
+    }
+    const multiDay = d.kind !== 'day';
+    const row = (i) => {
+      const task = i.kind === 'task' ? state.tasks.find((x) => x.id === i.id) : null;
+      const done = !!(task && task.done);
+      return `
+        <li class="item${done ? ' is-done' : ''}${i.days < 0 && !done ? ' is-overdue' : ''}">
+          ${task
+            ? `<input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(i.id)}" ${done ? 'checked' : ''} aria-label="Mark “${esc(i.title)}” done">`
+            : `<span class="kind-key"><i class="key key-${i.kind}"></i></span>`}
+          <div class="item-body">
+            <div class="item-title">${esc(i.title)}</div>
+            <div class="meta">
+              <span>${esc(KIND_LABEL[i.kind])}</span><span>·</span>
+              <a href="#/project/${esc(i.projectId)}" data-close-due>${esc(i.project)}</a>
+              ${i.owner ? `<span>· ${esc(i.owner)}</span>` : ''}
+            </div>
+          </div>
+          ${multiDay ? `<span class="due-date${i.days < 0 ? ' is-late' : ''}">${esc(i.days < 0 || i.days <= 1 ? relDays(i.days) : fmtDate(i.due))}</span>` : ''}
+        </li>`;
+    };
+    let el = document.getElementById('due-dialog');
+    const fresh = !el;
+    if (fresh) {
+      el = document.createElement('div');
+      el.id = 'due-dialog';
+      el.className = 'modal-backdrop';
+      el.addEventListener('mousedown', (e) => { if (e.target === el) closeDue(); });
+      document.body.appendChild(el);
+    }
+    el.innerHTML = `
+      <div class="modal due-modal" role="dialog" aria-modal="true" aria-labelledby="due-title">
+        <div class="due-head">
+          <div>
+            <h2 id="due-title">${esc(title)}</h2>
+            <p class="modal-msg">${esc(sub)} · ${d.items.length} item${d.items.length === 1 ? '' : 's'}</p>
+          </div>
+          <button class="icon-btn" data-action="close-due" aria-label="Close">×</button>
+        </div>
+        ${d.items.length
+          ? `<ul class="items due-list">${d.items.map(row).join('')}</ul>`
+          : '<p class="muted">Nothing due.</p>'}
+      </div>`;
+    if (fresh) el.querySelector('[data-action="close-due"]').focus();
+  }
+
   function workloadHTML(rows) {
     if (!rows.length) return '<p class="muted">No open tasks.</p>';
     const max = Math.max(1, ...rows.map((r) => r.open));
@@ -1557,8 +1655,8 @@
       ${invitesHTML()}
       <section class="tiles" aria-label="Summary">
         ${tile('Active projects', st.activeCount, `${st.submittedCount} submitted · under review`)}
-        ${tile('Overdue', st.overdueCount, st.overdueCount ? 'Past their due date' : 'Nothing overdue', st.overdueCount ? 'tile-critical' : 'tile-good', st.overdueCount ? 'alert' : 'check')}
-        ${tile('Due in 7 days', st.dueSoonCount, `Through ${esc(fmtDate(addDays(t, WEEK_DAYS)))}`)}
+        ${tile('Overdue', st.overdueCount, st.overdueCount ? 'Past their due date' : 'Nothing overdue', st.overdueCount ? 'tile-critical' : 'tile-good', st.overdueCount ? 'alert' : 'check', 'overdue')}
+        ${tile('Due in 7 days', st.dueSoonCount, `Through ${esc(fmtDate(addDays(t, WEEK_DAYS)))}`, '', '', 'soon')}
         ${tile('Tasks completed', st.doneThisWeek, 'In the last 7 days')}
       </section>
 
@@ -2063,6 +2161,7 @@
     if (ui.page && ui.page !== page) ui.search = '';
     ui.page = page;
     const m = hash.match(/^#\/project\/(.+)$/);
+    if (ui.due) renderDue();
     if (m) renderProject(decodeURIComponent(m[1]));
     else if (hash === '#/projects') renderBoard();
     else if (hash === '#/people') renderPeople();
@@ -2094,8 +2193,9 @@
   }
 
   function onClick(e) {
+    if (e.target.closest('[data-close-due]')) closeDue();
     const row = e.target.closest('tr[data-href]');
-    if (row && !ui.selecting && !e.target.closest('a, button, input, label')) {
+    if (row && !ui.selecting && !e.target.closest('a, button, input, label, [data-action]')) {
       location.hash = row.dataset.href;
       return;
     }
@@ -2119,6 +2219,30 @@
         save();
         location.hash = `#/project/${np.id}`;
       });
+    } else if (a === 'show-day') {
+      e.preventDefault();
+      e.stopPropagation();
+      openDue({ kind: 'day', date: el.dataset.date, filtered: false });
+    } else if (a === 'show-due') {
+      openDue({ kind: el.dataset.kind, filtered: true });
+    } else if (a === 'close-due') {
+      closeDue();
+    } else if (a === 'cal-day') {
+      ui.calDay = el.dataset.date;
+      ui.calMonth = el.dataset.date.slice(0, 7);
+      route();
+      openDue({ kind: 'day', date: el.dataset.date, filtered: true });
+    } else if (a === 'cal-prev' || a === 'cal-next') {
+      const m = parseISO(`${ui.calMonth || today().slice(0, 7)}-01`);
+      m.setMonth(m.getMonth() + (a === 'cal-next' ? 1 : -1));
+      ui.calMonth = toISO(m).slice(0, 7);
+      route();
+      const nav = document.querySelector(`[data-action="${a}"]`);
+      if (nav) nav.focus();
+    } else if (a === 'cal-today') {
+      ui.calMonth = '';
+      ui.calDay = '';
+      route();
     } else if (a === 'set-type') {
       ui.typeFilter = el.dataset.type || 'all';
       route();
@@ -2412,7 +2536,17 @@
     document.addEventListener('pointerover', (e) => { const el = tipTarget(e); if (el) showTip(el); });
     document.addEventListener('pointerout', (e) => { if (tipTarget(e)) hideTip(); });
     document.addEventListener('focusin', (e) => { const el = tipTarget(e); if (el) showTip(el); else hideTip(); });
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideTip();
+        if (ui.due && !document.querySelector('.modal-backdrop:not(#due-dialog)')) closeDue();
+      }
+      const b = e.target.closest && e.target.closest('[role="button"][data-action]');
+      if (b && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        b.click();
+      }
+    });
     window.addEventListener('scroll', hideTip, { passive: true });
     window.addEventListener('focus', refreshFromServer);
     window.addEventListener('beforeunload', (e) => {
