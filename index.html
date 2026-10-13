@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research Project Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="topbar">
+    <a class="brand" href="#/">Research Tracker</a>
+    <a data-nav="home" href="#/">This week</a>
+    <a data-nav="projects" href="#/projects">Projects</a>
+    <span class="spacer"></span>
+    <button class="btn small" data-action="new-project">+ New project</button>
+  </nav>
+
+  <p id="storage-warning" class="warning" hidden>
+    This browser isn't letting the tracker save. Changes will be lost when you close the tab — use Export to keep a copy.
+  </p>
+
+  <main id="app"></main>
+
+  <footer class="footer">
+    <span class="muted">Saved in this browser only.</span>
+    <button class="link-btn" data-action="export">Export backup</button>
+    <button class="link-btn" data-action="import">Import</button>
+    <input id="import-file" type="file" accept="application/json,.json" hidden>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
