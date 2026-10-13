@@ -161,3 +161,35 @@ test('every button in the app has a click handler', () => {
   const missing = [...used].filter((a) => !handled.has(a));
   assert.deepStrictEqual(missing, []);
 });
+
+test('meetings: repeats, end dates, cancelled dates and calendar files', () => {
+  const { normalizeMeetings, occursOn, meetingsBetween, describeMeeting, meetingICS } = require('../app.js');
+  const [weekly, fort, nth, monthly, once, days] = normalizeMeetings([
+    { title: 'Lab meeting', date: '2026-10-13', start: '09:00', end: '10:00', repeat: 'weekly', until: '2026-11-10', skip: ['2026-10-27'] },
+    { title: 'Supervision', date: '2026-10-14', start: '14:00', repeat: 'fortnightly' },
+    { title: 'Journal club', date: '2026-10-13', repeat: 'monthly-nth' }, // 2nd Tuesday
+    { title: 'Stats clinic', date: '2026-01-31', repeat: 'monthly' },
+    { title: 'Ethics', date: '2026-10-20', start: '11:30' },
+    { title: 'Standup', date: '2026-10-12', repeat: 'weekdays', start: '08:00' },
+  ]);
+  assert.ok(occursOn(weekly, '2026-10-20') && !occursOn(weekly, '2026-10-21'));
+  assert.ok(!occursOn(weekly, '2026-10-27'), 'cancelled date is skipped');
+  assert.ok(occursOn(weekly, '2026-11-10') && !occursOn(weekly, '2026-11-17'), 'ends on until');
+  assert.ok(!occursOn(fort, '2026-10-21') && occursOn(fort, '2026-10-28'));
+  assert.ok(occursOn(nth, '2026-11-10') && !occursOn(nth, '2026-11-03'), '2nd Tuesday of November');
+  assert.ok(!occursOn(monthly, '2026-02-28') && occursOn(monthly, '2026-03-31'), 'months without the date are skipped');
+  assert.ok(occursOn(days, '2026-10-16') && !occursOn(days, '2026-10-17'), 'weekdays only');
+  assert.ok(!occursOn(weekly, '2026-10-06'), 'nothing before the start date');
+  const week = meetingsBetween([weekly, once, days], '2026-10-19', '2026-10-21').map((x) => `${x.date} ${x.meeting.title}`);
+  assert.deepStrictEqual(week, ['2026-10-19 Standup', '2026-10-20 Standup', '2026-10-20 Lab meeting', '2026-10-20 Ethics', '2026-10-21 Standup']);
+  assert.strictEqual(describeMeeting(fort), 'Every 2 weeks on Wednesday, 14:00');
+  assert.strictEqual(describeMeeting(nth), 'Every month on the second Tuesday');
+  assert.strictEqual(describeMeeting(weekly), 'Every Tuesday, 09:00–10:00, until 10 Nov 2026');
+  const ics = meetingICS(weekly, '20261013T000000Z');
+  assert.match(ics, /DTSTART:20261013T090000\r\nDTEND:20261013T100000/);
+  assert.match(ics, /RRULE:FREQ=WEEKLY;UNTIL=20261110T235959/);
+  assert.match(ics, /EXDATE:20261027T090000/);
+  assert.match(meetingICS(nth, 'x'), /RRULE:FREQ=MONTHLY;BYDAY=2TU/);
+  assert.match(meetingICS(nth, 'x'), /DTSTART;VALUE=DATE:20261013/);
+  assert.deepStrictEqual(normalizeMeetings([{ title: '', date: '2026-01-01' }, { title: 'x', date: 'bad' }]), []);
+});

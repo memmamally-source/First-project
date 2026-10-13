@@ -199,7 +199,7 @@
         done: !!t.done,
         doneAt: str(t.doneAt),
       }));
-    return { version: 1, me: str(src.me), projects, tasks };
+    return { version: 1, me: str(src.me), projects, tasks, meetings: normalizeMeetings(src.meetings) };
   }
 
   // Everyone who has to do the next action, each ticked off separately.
@@ -316,6 +316,118 @@
     };
   }
 
+  // ---------- Meetings ----------
+
+  const REPEATS = [
+    { id: 'none', label: 'Does not repeat' },
+    { id: 'weekdays', label: 'Every weekday (Mon–Fri)' },
+    { id: 'weekly', label: 'Every week' },
+    { id: 'fortnightly', label: 'Every 2 weeks' },
+    { id: 'monthly', label: 'Every month, same date' },
+    { id: 'monthly-nth', label: 'Every month, same weekday (e.g. 2nd Tuesday)' },
+  ];
+  const REPEAT_IDS = REPEATS.map((r) => r.id);
+  const isTime = (v) => typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v);
+
+  function normalizeMeetings(list) {
+    return (Array.isArray(list) ? list : [])
+      .filter((m) => m && str(m.title).trim() && isISODate(m.date))
+      .map((m) => ({
+        id: m.id ? String(m.id) : uid(),
+        title: str(m.title).trim(),
+        date: m.date,
+        start: isTime(m.start) ? m.start : '',
+        end: isTime(m.end) ? m.end : '',
+        repeat: REPEAT_IDS.includes(m.repeat) ? m.repeat : 'none',
+        until: isISODate(m.until) && m.until >= m.date ? m.until : '',
+        location: str(m.location).trim(),
+        projectId: str(m.projectId),
+        notes: str(m.notes),
+        skip: (Array.isArray(m.skip) ? m.skip : []).filter(isISODate),
+      }));
+  }
+
+  const nthOfMonth = (d) => Math.ceil(d.getDate() / 7);
+
+  function occursOn(m, iso) {
+    if (iso < m.date || (m.until && iso > m.until) || m.skip.includes(iso)) return false;
+    const d = parseISO(iso);
+    const s = parseISO(m.date);
+    const gap = daysUntil(iso, m.date);
+    switch (m.repeat) {
+      case 'weekdays': return d.getDay() >= 1 && d.getDay() <= 5;
+      case 'weekly': return gap % 7 === 0;
+      case 'fortnightly': return gap % 14 === 0;
+      case 'monthly': return d.getDate() === s.getDate();
+      case 'monthly-nth': return d.getDay() === s.getDay() && nthOfMonth(d) === nthOfMonth(s);
+      default: return iso === m.date;
+    }
+  }
+
+  // Every meeting occurrence from..to (inclusive), sorted by date then start time.
+  function meetingsBetween(meetings, from, to) {
+    const out = [];
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      for (const m of meetings) if (occursOn(m, d)) out.push({ meeting: m, date: d });
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date) || (a.meeting.start || '99').localeCompare(b.meeting.start || '99'));
+  }
+
+  const ORDINAL = ['first', 'second', 'third', 'fourth', 'fifth'];
+  function ordinalDay(n) {
+    const v = n % 100;
+    return n + (v >= 11 && v <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
+  }
+
+  // "Every 2 weeks on Tuesday, 09:00–10:00, until 1 Mar 2027"
+  function describeMeeting(m) {
+    const s = parseISO(m.date);
+    const weekday = s.toLocaleDateString('en-GB', { weekday: 'long' });
+    const when = {
+      none: s.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' }),
+      weekdays: 'Every weekday',
+      weekly: `Every ${weekday}`,
+      fortnightly: `Every 2 weeks on ${weekday}`,
+      monthly: `Every month on the ${ordinalDay(s.getDate())}`,
+      'monthly-nth': `Every month on the ${ORDINAL[nthOfMonth(s) - 1]} ${weekday}`,
+    }[m.repeat];
+    const time = m.start ? `, ${m.start}${m.end ? `–${m.end}` : ''}` : '';
+    const until = m.repeat !== 'none' && m.until
+      ? `, until ${parseISO(m.until).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : '';
+    return when + time + until;
+  }
+
+  // Calendar file (iCalendar) so a meeting, repeats included, can be added to a phone or email calendar.
+  function meetingICS(m, nowUTC) {
+    const icsText = (v) => String(v).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const day = (iso) => iso.replace(/-/g, '');
+    const at = (iso, hhmm) => `${day(iso)}T${hhmm.replace(':', '')}00`;
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Research Project Tracker//EN', 'CALSCALE:GREGORIAN', 'BEGIN:VEVENT',
+      `UID:${m.id}@research-project-tracker`, `DTSTAMP:${nowUTC}`];
+    if (m.start) {
+      lines.push(`DTSTART:${at(m.date, m.start)}`);
+      if (m.end && m.end > m.start) lines.push(`DTEND:${at(m.date, m.end)}`);
+    } else {
+      lines.push(`DTSTART;VALUE=DATE:${day(m.date)}`, `DTEND;VALUE=DATE:${day(addDays(m.date, 1))}`);
+    }
+    const s = parseISO(m.date);
+    const byday = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][s.getDay()];
+    const rule = {
+      weekdays: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR',
+      weekly: 'FREQ=WEEKLY',
+      fortnightly: 'FREQ=WEEKLY;INTERVAL=2',
+      monthly: `FREQ=MONTHLY;BYMONTHDAY=${s.getDate()}`,
+      'monthly-nth': `FREQ=MONTHLY;BYDAY=${nthOfMonth(s)}${byday}`,
+    }[m.repeat];
+    if (rule) lines.push(`RRULE:${rule}${m.until ? `;UNTIL=${day(m.until)}T235959` : ''}`);
+    for (const x of m.skip) lines.push(m.start ? `EXDATE:${at(x, m.start)}` : `EXDATE;VALUE=DATE:${day(x)}`);
+    lines.push(`SUMMARY:${icsText(m.title)}`);
+    if (m.location) lines.push(`LOCATION:${icsText(m.location)}`);
+    if (m.notes) lines.push(`DESCRIPTION:${icsText(m.notes)}`);
+    lines.push('END:VEVENT', 'END:VCALENDAR');
+    return lines.join('\r\n') + '\r\n';
+  }
+
   // ---------- Search and people ----------
 
   function matchesSearch(p, q) {
@@ -402,7 +514,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { matchesSearch, peopleIndex, projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask };
+    module.exports = { normalizeMeetings, occursOn, meetingsBetween, describeMeeting, meetingICS, matchesSearch, peopleIndex, projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask };
   }
   if (typeof document === 'undefined') return;
 
@@ -486,10 +598,11 @@
     const saved = (settings.data && settings.data.data) || {};
     const meta = sb.user.user_metadata || {};
     state = stateFromRows(projects.data, str(saved.me) || str(meta.full_name));
+    state.meetings = normalizeMeetings(saved.meetings);
     sb.known = new Set(state.projects.map((p) => p.id));
     sb.synced = {};
     for (const p of state.projects) sb.synced[p.id] = JSON.stringify(projectBody(state, p));
-    sb.settingsSynced = JSON.stringify({ me: state.me });
+    sb.settingsSynced = JSON.stringify(settingsBody());
     if (!(await loadShareCounts())) {
       // Older database without my_share_counts(): count rows (may double-count a re-invited person).
       sb.shares = {};
@@ -597,9 +710,12 @@
     return html;
   }
 
+  // Personal settings saved with the account: your name and your meetings.
+  const settingsBody = () => ({ me: state.me, meetings: state.meetings });
+
   function hasUnsavedChanges() {
     if (sb.timer || sb.saving) return true;
-    if (JSON.stringify({ me: state.me }) !== sb.settingsSynced) return true;
+    if (JSON.stringify(settingsBody()) !== sb.settingsSynced) return true;
     return state.projects.some((p) => sb.synced[p.id] !== JSON.stringify(projectBody(state, p)))
       || [...sb.known].some((id) => !state.projects.some((p) => p.id === id));
   }
@@ -641,9 +757,9 @@
         sb.known.delete(id);
         delete sb.synced[id];
       }
-      const settingsJson = JSON.stringify({ me: state.me });
+      const settingsJson = JSON.stringify(settingsBody());
       if (settingsJson !== sb.settingsSynced) {
-        const res = await c.from('user_settings').upsert({ user_id: myId(), data: { me: state.me } });
+        const res = await c.from('user_settings').upsert({ user_id: myId(), data: settingsBody() });
         if (res.error) throw res.error;
         sb.settingsSynced = settingsJson;
       }
@@ -1383,6 +1499,10 @@
     const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
     const cells = Math.ceil((offset + daysInMonth) / 7) * 7;
     const start = addDays(`${month}-01`, -offset);
+    const meetingDates = new Map();
+    for (const x of meetingsBetween(state.meetings, start, addDays(start, cells - 1))) {
+      meetingDates.set(x.date, (meetingDates.get(x.date) || 0) + 1);
+    }
     const byDate = new Map();
     for (const i of items) {
       if (!byDate.has(i.due)) byDate.set(i.due, []);
@@ -1402,15 +1522,17 @@
         list.some((i) => i.days < 0) ? 'has-overdue' : '',
       ].filter(Boolean).join(' ');
       const kinds = [...new Set(list.map((i) => i.kind))];
-      const label = `${parseISO(d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}${list.length ? `, ${list.length} due` : ''}`;
+      const meets = meetingDates.get(d) || 0;
+      const label = `${parseISO(d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}${list.length ? `, ${list.length} due` : ''}${meets ? `, ${meets} meeting${meets === 1 ? '' : 's'}` : ''}`;
       return `
         <button class="${cls}" data-action="cal-day" data-date="${d}" aria-label="${esc(label)}" aria-pressed="${d === selected}">
           <span class="cal-num">${Number(d.slice(8))}</span>
-          <span class="cal-dots">${kinds.slice(0, 3).map((k) => `<i class="key key-${k}"></i>`).join('')}</span>
+          <span class="cal-dots">${kinds.slice(0, 3).map((k) => `<i class="key key-${k}"></i>`).join('')}${meets ? '<i class="key key-meeting"></i>' : ''}</span>
         </button>`;
     }).join('');
 
     const dayItems = byDate.get(selected) || [];
+    const dayMeets = meetingsBetween(state.meetings, selected, selected);
     const dayTitle = selected === t ? 'Today' : parseISO(selected).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
     return `
       <div class="cal-head">
@@ -1427,6 +1549,7 @@
         <span><i class="key key-task"></i>Task</span>
         <span><i class="key key-next"></i>Next action</span>
         <span><i class="key key-revision"></i>Revision</span>
+        <span><i class="key key-meeting"></i>Meeting</span>
         <span><i class="key key-ring"></i>Overdue</span>
       </div>
       <div class="cal-list">
@@ -1438,8 +1561,225 @@
               <div class="item-title">${esc(i.title)}</div>
               <div class="meta"><span>${esc(KIND_LABEL[i.kind])}</span><span>·</span><a href="#/project/${esc(i.projectId)}">${esc(i.project)}</a>${i.owner ? `<span>· ${esc(i.owner)}</span>` : ''}</div>
             </div>
-          </li>`).join('')}</ul>` : '<p class="muted small">Nothing due.</p>'}
+          </li>`).join('')}</ul>` : ''}
+        ${dayMeets.length ? `<ul class="items">${dayMeets.map((x) => meetingRow(x.meeting, x.date)).join('')}</ul>` : ''}
+        ${!dayItems.length && !dayMeets.length ? '<p class="muted small">Nothing due and no meetings.</p>' : ''}
       </div>`;
+  }
+
+  // ---------- Meetings: form, list, calendar file ----------
+
+  const REPEAT_ICON = '<span class="repeat-icon" title="Repeats" aria-label="Repeats">↻</span>';
+
+  function meetingTime(m) {
+    return m.start ? `${m.start}${m.end ? `–${m.end}` : ''}` : 'All day';
+  }
+
+  function locationHTML(loc) {
+    if (!loc) return '';
+    return /^https?:\/\//i.test(loc)
+      ? `<a href="${esc(loc)}" target="_blank" rel="noopener" class="join-link">Join</a>`
+      : `<span>· ${esc(loc)}</span>`;
+  }
+
+  function dayLabel(iso) {
+    const n = daysUntil(iso, today());
+    if (n === 0) return 'Today';
+    if (n === 1) return 'Tomorrow';
+    return parseISO(iso).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  }
+
+  function meetingForm(existing, presetDate) {
+    const m = existing || { title: '', date: presetDate || today(), start: '', end: '', repeat: 'none', until: '', location: '', projectId: '', notes: '', skip: [] };
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.id = 'meeting-dialog';
+    wrap.innerHTML = `
+      <form class="modal meeting-form" role="dialog" aria-modal="true" aria-labelledby="meeting-title-h" novalidate>
+        <h2 id="meeting-title-h">${existing ? 'Edit meeting' : 'New meeting'}</h2>
+        <label class="field">Title
+          <input id="mt-title" required placeholder="e.g. Weekly lab meeting" value="${esc(m.title)}">
+        </label>
+        <div class="row">
+          <label class="field grow">Date<input id="mt-date" type="date" required value="${esc(m.date)}"></label>
+          <label class="field">Start<input id="mt-start" type="time" value="${esc(m.start)}"></label>
+          <label class="field">End<input id="mt-end" type="time" value="${esc(m.end)}"></label>
+        </div>
+        <div class="row">
+          <label class="field grow">Repeats
+            <select id="mt-repeat">${REPEATS.map((r) => `<option value="${r.id}"${r.id === m.repeat ? ' selected' : ''}>${esc(r.label)}</option>`).join('')}</select>
+          </label>
+          <label class="field" id="mt-until-field">Until (optional)<input id="mt-until" type="date" value="${esc(m.until)}"></label>
+        </div>
+        <label class="field">Where (room or video link)
+          <input id="mt-location" placeholder="e.g. Room 3.14 or https://zoom.us/j/…" value="${esc(m.location)}">
+        </label>
+        <label class="field">Project (optional)
+          <select id="mt-project"><option value="">Not linked to a project</option>${state.projects
+            .slice().sort((a, b) => a.title.localeCompare(b.title))
+            .map((p) => `<option value="${esc(p.id)}"${p.id === m.projectId ? ' selected' : ''}>${esc(p.title)}</option>`).join('')}</select>
+        </label>
+        <label class="field">Notes (optional)<textarea id="mt-notes" rows="2" placeholder="Agenda, who attends…">${esc(m.notes)}</textarea></label>
+        ${m.skip.length ? `<p class="muted small">Cancelled dates: ${m.skip.map((x) => esc(fmtDate(x))).join(', ')} · <button type="button" class="link-btn" id="mt-restore">Restore them</button></p>` : ''}
+        <p class="auth-error" id="mt-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="mt-cancel">Cancel</button>
+          <button class="btn primary">${existing ? 'Save changes' : 'Add meeting'}</button>
+        </div>
+      </form>`;
+    const $ = (id) => wrap.querySelector(id);
+    const syncUntil = () => { $('#mt-until-field').hidden = $('#mt-repeat').value === 'none'; };
+    syncUntil();
+    $('#mt-repeat').addEventListener('change', syncUntil);
+    let skip = m.skip.slice();
+    const restore = $('#mt-restore');
+    if (restore) restore.addEventListener('click', () => { skip = []; restore.parentElement.remove(); });
+    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    $('#mt-cancel').addEventListener('click', close);
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
+    $('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const v = (id) => $(id).value.trim();
+      const err = (t) => { const x = $('#mt-error'); x.textContent = t; x.hidden = false; };
+      if (!v('#mt-title')) return err('Give the meeting a title.');
+      if (!isISODate(v('#mt-date'))) return err('Choose a date.');
+      if (v('#mt-end') && !v('#mt-start')) return err('Add a start time, or clear the end time.');
+      if (v('#mt-start') && v('#mt-end') && v('#mt-end') <= v('#mt-start')) return err('The end time must be after the start time.');
+      if (v('#mt-until') && v('#mt-until') < v('#mt-date') && v('#mt-repeat') !== 'none') return err('"Until" must be on or after the first date.');
+      const [saved] = normalizeMeetings([{
+        id: existing ? existing.id : uid(),
+        title: v('#mt-title'), date: v('#mt-date'), start: v('#mt-start'), end: v('#mt-end'),
+        repeat: v('#mt-repeat'), until: v('#mt-repeat') === 'none' ? '' : v('#mt-until'),
+        location: v('#mt-location'), projectId: v('#mt-project'), notes: $('#mt-notes').value, skip,
+      }]);
+      if (existing) Object.assign(existing, saved);
+      else state.meetings.push(saved);
+      close();
+      commit(); // also refreshes an open day pop-up
+    });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(wrap);
+    $('#mt-title').focus();
+  }
+
+  function deleteMeeting(m) {
+    askDialog({
+      title: 'Delete this meeting?',
+      message: m.repeat === 'none'
+        ? `“${m.title}” will be removed.`
+        : `“${m.title}” and all its repeats will be removed. To skip just one date, use “Cancel this date” on that day instead.`,
+      confirmLabel: 'Delete meeting',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      state.meetings = state.meetings.filter((x) => x.id !== m.id);
+      commit();
+    });
+  }
+
+  function downloadICS(m) {
+    const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+    const name = m.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40) || 'meeting';
+    saveFile(`${name}.ics`, meetingICS(m, now), 'text/calendar');
+  }
+
+  function meetingRow(m, date, opts) {
+    const p = m.projectId && findProject(m.projectId);
+    return `
+      <li class="item meeting-item">
+        <span class="meeting-time">${esc(opts && opts.showDay ? dayLabel(date) : meetingTime(m))}${opts && opts.showDay ? `<small>${esc(meetingTime(m))}</small>` : ''}</span>
+        <div class="item-body">
+          <div class="item-title">${esc(m.title)} ${m.repeat !== 'none' ? REPEAT_ICON : ''}</div>
+          <div class="meta">
+            <span>Meeting</span>
+            ${p ? `<span>·</span><a href="#/project/${esc(p.id)}" data-close-due>${esc(p.title)}</a>` : ''}
+            ${locationHTML(m.location)}
+          </div>
+          ${opts && opts.actions ? `
+            <div class="meeting-actions">
+              <button class="link-btn" data-action="edit-meeting" data-id="${esc(m.id)}">Edit</button>
+              ${m.repeat !== 'none'
+                ? `<button class="link-btn" data-action="skip-meeting" data-id="${esc(m.id)}" data-date="${esc(date)}">Cancel this date</button>`
+                : `<button class="link-btn danger-link" data-action="delete-meeting" data-id="${esc(m.id)}">Delete</button>`}
+            </div>` : ''}
+        </div>
+      </li>`;
+  }
+
+  function upcomingMeetingsHTML() {
+    const t = today();
+    const list = meetingsBetween(state.meetings, t, addDays(t, 13)).slice(0, 6);
+    return `
+      <section class="panel">
+        <div class="panel-head"><h2>Upcoming meetings</h2><a class="panel-link" href="#/meetings">All →</a></div>
+        ${list.length
+          ? `<ul class="items">${list.map((x) => meetingRow(x.meeting, x.date, { showDay: true })).join('')}</ul>`
+          : '<p class="muted small">No meetings in the next 2 weeks.</p>'}
+        <button class="btn small" data-action="new-meeting">+ Add meeting</button>
+      </section>`;
+  }
+
+  function renderMeetings() {
+    setNav('meetings');
+    const t = today();
+    const series = state.meetings.slice().sort((a, b) => {
+      const na = meetingsBetween([a], t, addDays(t, 400))[0];
+      const nb = meetingsBetween([b], t, addDays(t, 400))[0];
+      return (na ? na.date : '9999') .localeCompare(nb ? nb.date : '9999') || a.title.localeCompare(b.title);
+    });
+    const agenda = meetingsBetween(state.meetings, t, addDays(t, 27));
+    const byDay = new Map();
+    for (const x of agenda) {
+      if (!byDay.has(x.date)) byDay.set(x.date, []);
+      byDay.get(x.date).push(x);
+    }
+    app().innerHTML = `
+      ${flashHTML()}
+      <header class="page-head">
+        <div>
+          <h1>Meetings</h1>
+          <p class="eyebrow">Research meetings, one-off or repeating. They also show on the dashboard calendar.</p>
+        </div>
+        <button class="btn primary" data-action="new-meeting">+ Add meeting</button>
+      </header>
+      ${!state.meetings.length
+        ? '<section class="empty"><h2>No meetings yet</h2><p>Add your lab meetings, supervisions and journal clubs. Repeating meetings only need adding once.</p><button class="btn primary" data-action="new-meeting">+ Add meeting</button></section>'
+        : `
+        <div class="grid-2 meetings-grid">
+          <section class="panel">
+            <div class="panel-head"><h2>Next 4 weeks</h2></div>
+            ${byDay.size ? [...byDay.entries()].map(([d, xs]) => `
+              <h3 class="subhead">${esc(dayLabel(d))}</h3>
+              <ul class="items">${xs.map((x) => meetingRow(x.meeting, x.date, { actions: true })).join('')}</ul>`).join('')
+              : '<p class="muted">Nothing in the next 4 weeks.</p>'}
+          </section>
+          <section class="panel">
+            <div class="panel-head"><h2>All meetings <span class="count">${state.meetings.length}</span></h2></div>
+            <ul class="items">${series.map((m) => {
+              const next = meetingsBetween([m], t, addDays(t, 400))[0];
+              const p = m.projectId && findProject(m.projectId);
+              return `
+                <li class="item series-item">
+                  <div class="item-body">
+                    <div class="item-title">${esc(m.title)} ${m.repeat !== 'none' ? REPEAT_ICON : ''}</div>
+                    <div class="meta"><span>${esc(describeMeeting(m))}</span></div>
+                    <div class="meta">
+                      <span>${next ? `Next: ${esc(dayLabel(next.date))}` : 'No upcoming dates'}</span>
+                      ${p ? `<span>·</span><a href="#/project/${esc(p.id)}">${esc(p.title)}</a>` : ''}
+                      ${locationHTML(m.location)}
+                    </div>
+                    <div class="meeting-actions">
+                      <button class="link-btn" data-action="edit-meeting" data-id="${esc(m.id)}">Edit</button>
+                      <button class="link-btn" data-action="ics-meeting" data-id="${esc(m.id)}">Add to my calendar</button>
+                      <button class="link-btn danger-link" data-action="delete-meeting" data-id="${esc(m.id)}">Delete</button>
+                    </div>
+                  </div>
+                </li>`;
+            }).join('')}</ul>
+          </section>
+        </div>`}`;
   }
 
   // ---------- "What's due" pop-up ----------
@@ -1495,6 +1835,7 @@
       sub = `${fmtDate(t)} – ${fmtDate(addDays(t, WEEK_DAYS))}`;
     }
     const multiDay = d.kind !== 'day';
+    const meets = d.kind === 'day' ? meetingsBetween(state.meetings, d.date, d.date) : [];
     const row = (i) => {
       const task = i.kind === 'task' ? state.tasks.find((x) => x.id === i.id) : null;
       const done = !!(task && task.done);
@@ -1528,13 +1869,16 @@
         <div class="due-head">
           <div>
             <h2 id="due-title">${esc(title)}</h2>
-            <p class="modal-msg">${esc(sub)} · ${d.items.length} item${d.items.length === 1 ? '' : 's'}</p>
+            <p class="modal-msg">${esc(sub)} · ${d.items.length} due${d.kind === 'day' ? ` · ${meets.length} meeting${meets.length === 1 ? '' : 's'}` : ''}</p>
           </div>
           <button class="icon-btn" data-action="close-due" aria-label="Close">×</button>
         </div>
+        ${meets.length ? `<h3 class="subhead">Meetings</h3><ul class="items due-list">${meets.map((x) => meetingRow(x.meeting, x.date, { actions: true })).join('')}</ul>` : ''}
+        ${d.kind === 'day' ? `<h3 class="subhead">Due</h3>` : ''}
         ${d.items.length
           ? `<ul class="items due-list">${d.items.map(row).join('')}</ul>`
           : '<p class="muted">Nothing due.</p>'}
+        ${d.kind === 'day' ? `<p class="due-add"><button class="btn small" data-action="new-meeting" data-date="${esc(d.date)}">+ Add a meeting on this day</button></p>` : ''}
       </div>`;
     if (fresh) el.querySelector('[data-action="close-due"]').focus();
   }
@@ -1686,9 +2030,10 @@
         </section>
         <div class="side-col">
           <section class="panel cal-panel">
-            <div class="panel-head"><h2>Calendar</h2></div>
+            <div class="panel-head"><h2>Calendar</h2><button class="link-btn panel-link" data-action="new-meeting">+ Meeting</button></div>
             ${calendarHTML(items, t)}
           </section>
+          ${upcomingMeetingsHTML()}
           <section class="panel">
             <div class="panel-head"><h2>Study types</h2>${filtered ? '<button class="link-btn panel-link" data-action="set-type" data-type="all">Show all</button>' : ''}</div>
             <p class="panel-sub">Projects by design · select one to filter</p>
@@ -2165,6 +2510,7 @@
     if (m) renderProject(decodeURIComponent(m[1]));
     else if (hash === '#/projects') renderBoard();
     else if (hash === '#/people') renderPeople();
+    else if (hash === '#/meetings') renderMeetings();
     else renderHome();
   }
 
@@ -2219,6 +2565,26 @@
         save();
         location.hash = `#/project/${np.id}`;
       });
+    } else if (a === 'new-meeting') {
+      meetingForm(null, el.dataset.date);
+    } else if (a === 'edit-meeting' || a === 'delete-meeting' || a === 'ics-meeting' || a === 'skip-meeting') {
+      const m = state.meetings.find((x) => x.id === el.dataset.id);
+      if (!m) return;
+      if (a === 'edit-meeting') meetingForm(m);
+      else if (a === 'delete-meeting') deleteMeeting(m);
+      else if (a === 'ics-meeting') downloadICS(m);
+      else {
+        askDialog({
+          title: 'Cancel this date?',
+          message: `“${m.title}” on ${fmtDate(el.dataset.date)} will be skipped. The other dates stay.`,
+          confirmLabel: 'Cancel this date',
+          cancelLabel: 'Keep it',
+        }).then((ok) => {
+          if (!ok) return;
+          if (!m.skip.includes(el.dataset.date)) m.skip.push(el.dataset.date);
+          commit();
+        });
+      }
     } else if (a === 'show-day') {
       e.preventDefault();
       e.stopPropagation();
@@ -2443,17 +2809,20 @@
 
   async function exportData() {
     const data = JSON.stringify({ ...state, projects: state.projects.map(({ ownerId, ...p }) => p) }, null, 2);
-    const filename = `research-projects-${today()}.json`;
+    saveFile(`research-projects-${today()}.json`, data, 'application/json');
+  }
+
+  async function saveFile(filename, data, type) {
     const downloads = await capability('downloads');
     if (downloads) {
       try {
         await downloads.save({ filename, data });
       } catch (e) {
-        if (!e || e.code !== 'declined') notice("Couldn't export", 'The download was blocked here. Try again in a moment.');
+        if (!e || e.code !== 'declined') notice("Couldn't save the file", 'The download was blocked here. Try again in a moment.');
       }
       return;
     }
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([data], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2484,6 +2853,9 @@
         state.projects.push(...add.projects);
         state.tasks.push(...add.tasks);
         if (!state.me && data.me) state.me = String(data.me);
+        for (const m of normalizeMeetings(data.meetings)) {
+          if (!state.meetings.some((x) => x.id === m.id)) state.meetings.push(m);
+        }
         commit();
         notice('Projects imported', `Added ${add.projects.length} project${add.projects.length === 1 ? '' : 's'} to your dashboard.`);
         return;
