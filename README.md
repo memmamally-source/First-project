@@ -4,7 +4,8 @@ One place to see where every paper stands.
 
 - **Dashboard** — "What needs my attention this week?": summary tiles (active projects, overdue, due in 7 days, tasks completed), a 30-day deadline timeline across projects, a stage pipeline chart, open tasks by person, an action list you can tick off, and a portfolio table. "Only mine" filters to your own work.
 - **Projects** — a board by stage: idea → protocol → screening → extraction → writing → submitted.
-- **Each project** — stage, next action (who and by when), tasks with owners and due dates, team and roles, target journal, submission date, revision deadline, and notes.
+- **Study types** — every project has a design (meta-analysis, systematic/scoping/umbrella/narrative review, cross-sectional, cohort, case-control, RCT, qualitative, mixed methods, case report). Filter the dashboard and board by a single type or by family (reviews vs primary studies). Primary studies use their own stage names: protocol & ethics, data collection, analysis.
+- **Each project** — study type, stage, next action (who and by when), tasks with owners and due dates, team and roles, target journal, submission date, revision deadline, and notes.
 
 ## Run it
 
