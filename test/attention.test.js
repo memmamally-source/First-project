@@ -84,3 +84,13 @@ test('study types: stage names, filtering and counts', () => {
   assert.deepStrictEqual(filterByType(s, 'none').projects.map((p) => p.id), ['c']);
   assert.deepStrictEqual(typeCounts(s.projects).map((t) => [t.id, t.count]), [['meta-analysis', 1], ['cross-sectional', 1], ['none', 1]]);
 });
+
+test('team roles: legacy free text maps to first author, co-author or contributor', () => {
+  const s = normalizeState({ projects: [{ id: 'p', team: [
+    { name: 'A', role: 'Lead author' }, { name: 'B', role: 'Supervisor' },
+    { name: 'C', role: 'Contributor' }, { name: 'D', role: 'coauthor' }, { name: 'E' },
+  ] }] });
+  assert.deepStrictEqual(s.projects[0].team.map((m) => [m.name, m.role, m.note]), [
+    ['A', 'first', ''], ['B', 'coauthor', 'Supervisor'], ['C', 'contributor', ''], ['D', 'coauthor', ''], ['E', 'coauthor', ''],
+  ]);
+});
