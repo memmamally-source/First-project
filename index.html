@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Research Project Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#/">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 20 20"><path d="M4 3h9l3 3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 9h6M7 12h6M7 15h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </span>
+        <span class="brand-text">Research Tracker</span>
+      </a>
+      <nav class="nav">
+        <a data-nav="home" href="#/">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg>
+          Dashboard
+        </a>
+        <a data-nav="projects" href="#/projects">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="4" height="14" rx="1.5"/><rect x="8.5" y="3" width="4" height="10" rx="1.5"/><rect x="14" y="3" width="3" height="7" rx="1.5"/></svg>
+          Projects
+        </a>
+      </nav>
+      <button class="btn primary new-btn" data-action="new-project">+ New project</button>
+      <div class="sidebar-foot">
+        <span class="muted">Saved in this browser only.</span>
+        <button class="link-btn" data-action="export">Export backup</button>
+        <button class="link-btn" data-action="import">Import</button>
+        <input id="import-file" type="file" accept="application/json,.json" hidden>
+      </div>
+    </aside>
+
+    <div class="content">
+      <p id="storage-warning" class="warning" hidden>
+        This browser isn't letting the tracker save. Changes will be lost when you close the tab — use Export backup to keep a copy.
+      </p>
+      <main id="app"></main>
+    </div>
+  </div>
+  <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
