@@ -183,7 +183,6 @@
           journal: { target: str(j.target), submittedOn: date(j.submittedOn), revisionDue: date(j.revisionDue) },
           notes: str(p.notes),
           ownerId: str(p.ownerId),
-          example: !!p.example || EXAMPLE_TITLES.includes(str(p.title)),
           createdAt: str(p.createdAt) || new Date().toISOString(),
           updatedAt: str(p.updatedAt) || new Date().toISOString(),
         };
@@ -226,15 +225,6 @@
     const pending = pendingOwners(p);
     return pending.length ? `Waiting for ${joinNames(pending)}` : 'Everyone has finished';
   }
-
-  // Titles of the built-in examples, so examples loaded before they were flagged can still be found.
-  const EXAMPLE_TITLES = [
-    'Exercise interventions for chronic low back pain: systematic review',
-    'Telehealth adoption in rural primary care: scoping review',
-    'Sleep quality in shift-working nurses: meta-analysis',
-    'Digital mental health apps for adolescents',
-    'Burnout among ICU nurses: national survey',
-  ];
 
   const sameName = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
@@ -326,80 +316,56 @@
     };
   }
 
-  function exampleState(today) {
-    const a = newProject('Exercise interventions for chronic low back pain: systematic review');
-    Object.assign(a, {
-      stage: 'screening',
-      studyType: 'systematic-review',
-      team: [
-        { id: uid(), name: 'You', role: 'first' },
-        { id: uid(), name: 'Dr. Patel', role: 'coauthor', note: 'Supervisor' },
-        { id: uid(), name: 'Sam Lee', role: 'coauthor', note: 'Second screener' },
-        { id: uid(), name: 'Lindiwe Dube', role: 'contributor', note: 'Librarian, search strategy' },
-      ],
-      nextAction: 'Finish full-text screening',
-      nextActionOwners: [{ name: 'You', done: true }, { name: 'Sam Lee', done: false }],
-      nextActionDue: addDays(today, 3),
-      journal: { target: 'BMJ Open', submittedOn: '', revisionDue: '' },
-      notes: 'PROSPERO registered. 412 records after deduplication.',
-    });
-    const b = newProject('Telehealth adoption in rural primary care: scoping review');
-    Object.assign(b, {
-      stage: 'writing',
-      studyType: 'scoping-review',
-      team: [
-        { id: uid(), name: 'You', role: 'first' },
-        { id: uid(), name: 'Dr. Patel', role: 'coauthor', note: 'Supervisor' },
-      ],
-      nextAction: 'Send draft to supervisor',
-      nextActionOwners: [{ name: 'You', done: false }],
-      nextActionDue: addDays(today, -1),
-      journal: { target: 'Journal of Telemedicine and Telecare', submittedOn: '', revisionDue: '' },
-    });
-    const c = newProject('Sleep quality in shift-working nurses: meta-analysis');
-    Object.assign(c, {
-      stage: 'submitted',
-      studyType: 'meta-analysis',
-      team: [
-        { id: uid(), name: 'Maria Gomez', role: 'first' },
-        { id: uid(), name: 'You', role: 'coauthor' },
-      ],
-      nextAction: 'Respond to reviewer 2 comments',
-      nextActionOwners: [{ name: 'Maria Gomez', done: false }],
-      nextActionDue: '',
-      journal: { target: 'Sleep Medicine', submittedOn: addDays(today, -60), revisionDue: addDays(today, 10) },
-    });
-    const d = newProject('Digital mental health apps for adolescents');
-    d.stage = 'idea';
-    d.studyType = 'qualitative';
-    const e = newProject('Burnout among ICU nurses: national survey');
-    Object.assign(e, {
-      stage: 'screening',
-      studyType: 'cross-sectional',
-      team: [
-        { id: uid(), name: 'You', role: 'first' },
-        { id: uid(), name: 'Sam Lee', role: 'coauthor', note: 'Statistician' },
-      ],
-      nextAction: 'Send survey reminder to participating units',
-      nextActionOwners: [{ name: 'You', done: false }],
-      nextActionDue: addDays(today, 4),
-      journal: { target: 'Intensive and Critical Care Nursing', submittedOn: '', revisionDue: '' },
-      notes: 'Ethics approved. Target sample 600; 342 responses so far.',
-    });
-    return {
-      version: 1,
-      me: 'You',
-      projects: [a, b, c, d, e].map((p) => ({ ...p, example: true })),
-      tasks: [
-        newTask(a.id, 'Resolve screening conflicts with Sam', 'You', addDays(today, 5)),
-        newTask(a.id, 'Pilot the extraction form', 'Sam Lee', addDays(today, 12)),
-        newTask(a.id, 'Run database searches', 'You', addDays(today, -30)),
-        newTask(b.id, 'Update PRISMA-ScR flow diagram', 'You', addDays(today, 2)),
-        newTask(b.id, 'Check reference formatting', '', ''),
-        newTask(c.id, 'Re-run sensitivity analysis', 'You', addDays(today, 6)),
-        newTask(e.id, 'Draft statistical analysis plan', 'Sam Lee', addDays(today, 9)),
-      ].map((t, i) => (i === 2 ? { ...t, done: true, doneAt: new Date().toISOString() } : t)),
+  // ---------- Search and people ----------
+
+  function matchesSearch(p, q) {
+    q = str(q).trim().toLowerCase();
+    if (!q) return true;
+    const hay = [p.title, p.journal.target, p.nextAction, (studyType(p.studyType) || {}).label, ...p.team.map((m) => m.name)]
+      .join(' ').toLowerCase();
+    return q.split(/\s+/).every((w) => hay.includes(w));
+  }
+
+  const ROLE_ORDER = ['first', 'coauthor', 'contributor', 'assigned'];
+
+  // Everyone named on a team, a task or a next action, with the papers they're on.
+  function peopleIndex(state) {
+    const people = new Map();
+    const person = (name) => {
+      const key = str(name).trim().toLowerCase();
+      if (!key) return null;
+      if (!people.has(key)) people.set(key, { name: str(name).trim(), papers: new Map(), openTasks: 0, waitingOn: 0 });
+      return people.get(key);
     };
+    const paper = (who, p, role) => {
+      if (!who.papers.has(p.id)) who.papers.set(p.id, { projectId: p.id, title: p.title, stage: p.stage, studyType: p.studyType, role, note: '', openTasks: 0, waiting: false });
+      const entry = who.papers.get(p.id);
+      if (ROLE_ORDER.indexOf(role) < ROLE_ORDER.indexOf(entry.role)) entry.role = role;
+      return entry;
+    };
+    for (const p of state.projects) {
+      for (const m of p.team) paper(person(m.name), p, m.role).note = m.note || '';
+      for (const n of pendingOwners(p)) {
+        const who = person(n);
+        if (!who) continue;
+        paper(who, p, 'assigned').waiting = true;
+        who.waitingOn += 1;
+      }
+    }
+    for (const t of state.tasks) {
+      if (t.done) continue;
+      const p = state.projects.find((x) => x.id === t.projectId);
+      const who = p && person(t.owner);
+      if (!who) continue;
+      paper(who, p, 'assigned').openTasks += 1;
+      who.openTasks += 1;
+    }
+    return [...people.values()]
+      .map((x) => ({
+        ...x,
+        papers: [...x.papers.values()].sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || a.title.localeCompare(b.title)),
+      }))
+      .sort((a, b) => b.papers.length - a.papers.length || a.name.localeCompare(b.name));
   }
 
   // ---------- Server rows (Supabase) ----------
@@ -436,7 +402,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
+    module.exports = { matchesSearch, peopleIndex, projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask };
   }
   if (typeof document === 'undefined') return;
 
@@ -584,7 +550,7 @@
       <section class="panel invite-panel" aria-label="Invitations">
         <div class="panel-head"><h2>${sb.invites.length === 1 ? "You've been invited to a project" : `You've been invited to ${sb.invites.length} projects`}</h2></div>
         <ul class="invites">${sb.invites.map((i) => `
-          <li>
+          <li class="${ui.inviteFocus === i.project_id ? 'is-focus' : ''}">
             <span class="invite-icon" aria-hidden="true">✉</span>
             <div class="item-body">
               <div class="item-title">${esc(i.title)}</div>
@@ -741,16 +707,87 @@
     if (error) return show(error.message || "Couldn't share. Try again.", true);
     if (data === 'self') return show("That's your own email. Enter a co-author's email.", true);
     if (data === 'already') return show(`${email} is already on this project.`, true);
-    if (data === 'added') {
-      sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
-      show(`Shared. ${email} can now see and edit this project from their dashboard.`);
-    } else {
-      sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
-      show(data === 'invited_new'
-        ? `Invite sent. ${email} doesn't have an account yet: send them the site link, and the invite will be waiting on their dashboard after they sign up.`
-        : `Invite sent. It will pop up on ${email}'s dashboard for them to accept.`);
-    }
+    sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
     loadPeople(p.id);
+    if (data === 'added') return show(`Shared. ${email} can now see and edit this project from their dashboard.`);
+    show(`Sending the invite to ${email}…`);
+    const emailed = await emailInvite(p, email);
+    showInviteResult(p, email, emailed);
+  }
+
+  const inviteLink = (p) => `${location.origin}${location.pathname}?invite=${encodeURIComponent(p.id)}`;
+
+  // Emails a sign-in link that lands on the invitation. Uses a separate client so the
+  // sender's own session is never touched. Returns true when Supabase accepted the email.
+  async function emailInvite(p, email) {
+    try {
+      const mailer = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, flowType: 'implicit', storageKey: 'rpt-invite-mailer' },
+      });
+      const meta = sb.user.user_metadata || {};
+      const { error } = await mailer.auth.signInWithOtp({
+        email,
+        options: {
+          shouldCreateUser: true,
+          emailRedirectTo: inviteLink(p),
+          data: { invited_to: p.title, invited_by: meta.full_name || sb.user.email },
+        },
+      });
+      return !error;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function inviteMessage(p, email) {
+    const meta = sb.user.user_metadata || {};
+    const from = meta.full_name || sb.user.email;
+    const subject = `Invitation: ${p.title}`;
+    const body = `Hi,\n\n${from} has invited you to collaborate on "${p.title}" in Research Project Tracker.\n\n`
+      + `Open this link to accept or decline:\n${inviteLink(p)}\n\n`
+      + `If you don't have an account yet, create one with this email address (${email}) and the invitation will be waiting for you.`;
+    return { subject, body };
+  }
+
+  // Shows what happened plus ways to send the invite yourself (in case the email doesn't arrive).
+  function showInviteResult(p, email, emailed) {
+    const msg = document.getElementById('share-msg');
+    if (!msg) return;
+    const { subject, body } = inviteMessage(p, email);
+    const q = (v) => encodeURIComponent(v);
+    msg.replaceChildren();
+    msg.className = emailed ? 'share-msg' : 'share-msg is-warn';
+    msg.hidden = false;
+    const text = document.createElement('p');
+    text.textContent = emailed
+      ? `Invite emailed to ${email}. It's also waiting on their dashboard. Not arrived? Send it from your own email:`
+      : `Invite created, but the automatic email couldn't be sent. Send it from your own email so ${email} gets it:`;
+    const row = document.createElement('div');
+    row.className = 'share-actions';
+    const gmail = document.createElement('a');
+    gmail.className = 'btn small';
+    gmail.target = '_blank';
+    gmail.rel = 'noopener';
+    gmail.href = `https://mail.google.com/mail/?view=cm&fs=1&to=${q(email)}&su=${q(subject)}&body=${q(body)}`;
+    gmail.textContent = 'Send from Gmail';
+    const mail = document.createElement('a');
+    mail.className = 'btn small';
+    mail.href = `mailto:${email}?subject=${q(subject)}&body=${q(body)}`;
+    mail.textContent = 'Open email app';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn small';
+    copy.textContent = 'Copy invite link';
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(inviteLink(p));
+        copy.textContent = 'Link copied';
+      } catch (e) {
+        window.prompt('Copy this link', inviteLink(p));
+      }
+    });
+    row.append(gmail, mail, copy);
+    msg.append(text, row);
   }
 
   async function unshare(p, userId, email) {
@@ -894,7 +931,27 @@
       setSyncStatus("Couldn't load your projects. Reload the page to try again.");
     }
     cloud.pending = false;
+    focusInviteFromLink();
     route();
+  }
+
+  // Arrived via an invite link (?invite=<project id>): point at that invite, then tidy the address.
+  function focusInviteFromLink() {
+    const params = new URLSearchParams(location.search);
+    const pid = params.get('invite');
+    if (!pid) return;
+    params.delete('invite');
+    const rest = params.toString();
+    history.replaceState(null, '', location.pathname + (rest ? `?${rest}` : '') + location.hash);
+    if (sb.invites.some((i) => i.project_id === pid)) {
+      ui.inviteFocus = pid;
+      location.hash = '#/';
+    } else if (state.projects.some((x) => x.id === pid)) {
+      ui.flash = "You've already joined this project. Here it is.";
+      location.hash = `#/project/${pid}`;
+    } else {
+      ui.flash = 'That invitation is no longer waiting. It may have been withdrawn, or accepted from another account.';
+    }
   }
 
   async function signOut() {
@@ -918,7 +975,7 @@
     });
     if (!window.supabase || !window.supabase.createClient) return showAuth('offline');
     sb.client = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
     });
     let recovering = /type=recovery/.test(location.hash + location.search);
     sb.client.auth.onAuthStateChange((event) => {
@@ -1006,7 +1063,23 @@
 
   const app = () => document.getElementById('app');
   const today = () => toISO(new Date());
-  const ui = { mineOnly: false, showDone: {}, typeFilter: 'all', calMonth: '', calDay: '' };
+  const ui = { mineOnly: false, showDone: {}, typeFilter: 'all', calMonth: '', calDay: '', search: '', peopleView: 'person', projView: readPref('rpt-view', 'list') };
+
+  // Small per-browser preferences (which view you like); safe if storage is blocked.
+  function readPref(key, fallback) {
+    try {
+      return localStorage.getItem(key) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function writePref(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      /* preference just won't be remembered */
+    }
+  }
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -1399,7 +1472,7 @@
           <p>Track each project from idea to submission: its stage, team, next action, deadlines and target journal.</p>
           <div class="row center">
             <button class="btn primary" data-action="new-project">Create your first project</button>
-            <button class="btn" data-action="load-example">Load example projects</button>
+            <button class="btn" data-action="import">Import from a backup</button>
           </div>
         </section>`;
       return;
@@ -1448,7 +1521,6 @@
 
       ${flashHTML()}
       ${invitesHTML()}
-      ${examplesBanner()}
       <section class="tiles" aria-label="Summary">
         ${tile('Active projects', st.activeCount, `${st.submittedCount} submitted · under review`)}
         ${tile('Overdue', st.overdueCount, st.overdueCount ? 'Past their due date' : 'Nothing overdue', st.overdueCount ? 'tile-critical' : 'tile-good', st.overdueCount ? 'alert' : 'check')}
@@ -1511,9 +1583,10 @@
 
   function renderBoard() {
     setNav('projects');
-    const shown = state.projects.filter((p) => matchesType(p, ui.typeFilter));
+    const shown = state.projects.filter((p) => matchesType(p, ui.typeFilter) && matchesSearch(p, ui.search));
     const sel = ui.selected || new Set();
-    const cols = STAGES.map((s) => {
+    const listView = ui.projView === 'list';
+    const cols = listView ? '' : STAGES.map((s) => {
       const ps = shown.filter((p) => p.stage === s.id);
       return `
         <section class="column">
@@ -1537,11 +1610,42 @@
           }).join('') || '<p class="muted small">—</p>'}
         </section>`;
     }).join('');
+    const rows = !listView ? '' : shown
+      .slice()
+      .sort((a, b) => STAGE_IDS.indexOf(a.stage) - STAGE_IDS.indexOf(b.stage) || a.title.localeCompare(b.title))
+      .map((p) => {
+        const authors = p.team.filter((m) => m.role !== 'contributor').map((m) => m.name);
+        return `
+        <tr class="row-link${sel.has(p.id) ? ' is-selected' : ''}" data-href="#/project/${esc(p.id)}">
+          ${ui.selecting ? `<td class="cell-check"><input type="checkbox" class="check" data-select="${esc(p.id)}" ${sel.has(p.id) ? 'checked' : ''} aria-label="Select ${esc(p.title)}"></td>` : ''}
+          <td class="cell-project">
+            <a href="#/project/${esc(p.id)}">${esc(p.title)}</a>
+            <div class="cell-badges">${typeBadge(p.studyType)} ${shareChip(p)}</div>
+          </td>
+          <td>${stageMeter(p.stage, p.studyType)}</td>
+          <td>${authors.length ? esc(authors.slice(0, 3).join(', ')) + (authors.length > 3 ? ` <span class="muted">+${authors.length - 3}</span>` : '') : '<span class="muted">—</span>'}</td>
+          <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${waitingText(p) ? `<div class="meta">${esc(waitingText(p))}</div>` : ''}</td>
+          <td>${dueBadge(p.nextActionDue) || '<span class="muted">—</span>'}</td>
+          <td class="num">${openTasks(p.id).length}</td>
+        </tr>`;
+      }).join('');
+    const results = !shown.length && state.projects.length
+      ? `<p class="muted no-results">No projects match${ui.search ? ` “${esc(ui.search)}”` : ''}. <button class="link-btn" data-action="clear-search">Clear search</button></p>`
+      : listView
+        ? `<section class="panel list-panel"><div class="table-wrap"><table class="project-list">
+            <thead><tr>${ui.selecting ? '<th></th>' : ''}<th>Project</th><th>Stage</th><th>Authors</th><th>Next action</th><th>Due</th><th class="num">Open tasks</th></tr></thead>
+            <tbody>${rows}</tbody></table></div></section>`
+        : `<div class="board">${cols}</div>`;
     app().innerHTML = `
       ${flashHTML()}
       <header class="page-head">
-        <h1>Projects</h1>
+        <h1>Projects <span class="count">${shown.length}${shown.length !== state.projects.length ? ` of ${state.projects.length}` : ''}</span></h1>
         <div class="row">
+          <input type="search" id="project-search" class="search-input" placeholder="Search title, author, journal…" value="${esc(ui.search)}" aria-label="Search projects">
+          <div class="segmented" role="group" aria-label="View">
+            <button data-action="proj-view" data-view="list" aria-pressed="${listView}">List</button>
+            <button data-action="proj-view" data-view="board" aria-pressed="${!listView}">Board</button>
+          </div>
           ${typeFilterControl()}
           ${state.projects.length ? `<button class="btn" data-action="toggle-select">${ui.selecting ? 'Cancel' : 'Select'}</button>` : ''}
           <button class="btn primary" data-action="new-project">+ New project</button>
@@ -1552,8 +1656,77 @@
           <span><strong>${sel.size}</strong> selected · tick the projects to remove from your dashboard</span>
           <button class="link-btn" data-action="select-all">Select all shown</button>
           <button class="btn danger-solid small" data-action="remove-selected" ${sel.size ? '' : 'disabled'}>Remove from dashboard</button>
-        </div>` : examplesBanner()}
-      <div class="board">${cols}</div>`;
+        </div>` : ''}
+      ${results}`;
+  }
+
+  // ---------- People: who is on which paper ----------
+
+  const ROLE_BADGE = { first: 'First author', coauthor: 'Co-author', contributor: 'Contributor', assigned: 'Not on team · has work' };
+
+  function renderPeople() {
+    setNav('people');
+    const scoped = filterByType(state, ui.typeFilter);
+    const q = ui.search.trim().toLowerCase();
+    const everyone = peopleIndex(scoped);
+    const people = everyone.filter((x) => !q || x.name.toLowerCase().includes(q) || x.papers.some((pp) => pp.title.toLowerCase().includes(q)));
+    const byPaper = ui.peopleView === 'paper';
+
+    const personCard = (x) => `
+      <section class="panel person">
+        <div class="person-head">
+          <span class="avatar" aria-hidden="true">${esc(initials(x.name))}</span>
+          <div class="grow">
+            <h2>${esc(x.name)}</h2>
+            <div class="meta">${x.papers.length} paper${x.papers.length === 1 ? '' : 's'} · ${x.openTasks} open task${x.openTasks === 1 ? '' : 's'}${x.waitingOn ? ` · <span class="waiting-on">waiting on them for ${x.waitingOn} next action${x.waitingOn === 1 ? '' : 's'}</span>` : ''}</div>
+          </div>
+        </div>
+        <ul class="person-papers">${x.papers.map((pp) => `
+          <li>
+            <a href="#/project/${esc(pp.projectId)}" class="grow">${esc(pp.title)}</a>
+            <span class="role-badge role-${pp.role}">${esc(ROLE_BADGE[pp.role])}</span>
+            <span class="person-paper-meta">${esc(stageLabel(pp.stage, pp.studyType))}${pp.openTasks ? ` · ${pp.openTasks} task${pp.openTasks === 1 ? '' : 's'}` : ''}${pp.waiting ? ' · <strong>waiting on them</strong>' : ''}</span>
+          </li>`).join('')}
+        </ul>
+      </section>`;
+
+    const names = (p, role) => p.team.filter((m) => m.role === role).map((m) => esc(m.name)).join(', ') || '<span class="muted">—</span>';
+    const paperRows = scoped.projects
+      .filter((p) => !q || p.title.toLowerCase().includes(q) || p.team.some((m) => m.name.toLowerCase().includes(q)))
+      .sort((a, b) => a.title.localeCompare(b.title))
+      .map((p) => `
+        <tr>
+          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a><div class="cell-badges">${typeBadge(p.studyType)}</div></td>
+          <td>${names(p, 'first')}</td>
+          <td>${names(p, 'coauthor')}</td>
+          <td>${names(p, 'contributor')}</td>
+          <td>${pendingOwners(p).length ? esc(joinNames(pendingOwners(p))) : '<span class="muted">—</span>'}</td>
+        </tr>`).join('');
+
+    app().innerHTML = `
+      <header class="page-head">
+        <div>
+          <h1>People</h1>
+          <p class="eyebrow">Who is on which paper, and what they're working on</p>
+        </div>
+        <div class="row">
+          <input type="search" id="people-search" class="search-input" placeholder="Search people or papers…" value="${esc(ui.search)}" aria-label="Search people or papers">
+          <div class="segmented" role="group" aria-label="Group by">
+            <button data-action="people-view" data-view="person" aria-pressed="${!byPaper}">By person</button>
+            <button data-action="people-view" data-view="paper" aria-pressed="${byPaper}">By paper</button>
+          </div>
+          ${typeFilterControl()}
+        </div>
+      </header>
+      ${!everyone.length
+        ? '<section class="empty"><p>Nobody yet. Add authors and contributors on each project page, under Team.</p></section>'
+        : byPaper
+          ? `<section class="panel"><div class="table-wrap"><table>
+              <thead><tr><th>Paper</th><th>First author</th><th>Co-authors</th><th>Contributors</th><th>Waiting for</th></tr></thead>
+              <tbody>${paperRows || '<tr><td colspan="5" class="muted">No papers match.</td></tr>'}</tbody></table></div></section>`
+          : people.length
+            ? `<div class="people-grid">${people.map(personCard).join('')}</div>`
+            : `<p class="muted no-results">Nobody matches “${esc(ui.search)}”. <button class="link-btn" data-action="clear-search">Clear search</button></p>`}`;
   }
 
   function renderProject(id) {
@@ -1581,6 +1754,7 @@
       </li>`;
 
     app().innerHTML = `
+      ${flashHTML()}
       <p><a href="#/projects">← All projects</a></p>
       <header class="page-head">
         <input class="title-input" data-field="title" value="${esc(p.title)}" aria-label="Project title">
@@ -1757,16 +1931,6 @@
     commit();
   }
 
-  function examplesBanner() {
-    const ex = state.projects.filter((p) => p.example && ownsProject(p));
-    if (!ex.length) return '';
-    return `
-      <div class="example-banner" role="note">
-        <span>${ex.length} example project${ex.length === 1 ? ' is' : 's are'} on your dashboard. Remove them when you've finished exploring.</span>
-        <button class="btn small" data-action="remove-examples">Remove examples</button>
-      </div>`;
-  }
-
   function sharePanelHTML(p) {
     const owner = ownsProject(p);
     return `
@@ -1861,9 +2025,13 @@
   function route() {
     hideTip();
     const hash = location.hash || '#/';
+    const page = hash.replace(/^(#\/[a-z]*).*$/, '$1');
+    if (ui.page && ui.page !== page) ui.search = '';
+    ui.page = page;
     const m = hash.match(/^#\/project\/(.+)$/);
     if (m) renderProject(decodeURIComponent(m[1]));
     else if (hash === '#/projects') renderBoard();
+    else if (hash === '#/people') renderPeople();
     else renderHome();
   }
 
@@ -1892,6 +2060,11 @@
   }
 
   function onClick(e) {
+    const row = e.target.closest('tr[data-href]');
+    if (row && !ui.selecting && !e.target.closest('a, button, input, label')) {
+      location.hash = row.dataset.href;
+      return;
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const a = el.dataset.action;
@@ -1912,33 +2085,6 @@
         save();
         location.hash = `#/project/${np.id}`;
       });
-    } else if (a === 'load-example') {
-      if (isSb()) {
-        const ex = remapIds(exampleState(today()));
-        state.projects.push(...normalizeState(ex).projects);
-        state.tasks.push(...normalizeState(ex).tasks);
-        state.me = state.me || 'You';
-      } else {
-        state = normalizeState(exampleState(today()));
-      }
-      commit();
-    } else if (a === 'cal-day') {
-      ui.calDay = el.dataset.date;
-      ui.calMonth = el.dataset.date.slice(0, 7);
-      route();
-      const btn = document.querySelector(`.cal-day[data-date="${el.dataset.date}"]`);
-      if (btn) btn.focus();
-    } else if (a === 'cal-prev' || a === 'cal-next') {
-      const m = parseISO(`${ui.calMonth || today().slice(0, 7)}-01`);
-      m.setMonth(m.getMonth() + (a === 'cal-next' ? 1 : -1));
-      ui.calMonth = toISO(m).slice(0, 7);
-      route();
-      const nav = document.querySelector(`[data-action="${a}"]`);
-      if (nav) nav.focus();
-    } else if (a === 'cal-today') {
-      ui.calMonth = '';
-      ui.calDay = '';
-      route();
     } else if (a === 'set-type') {
       ui.typeFilter = el.dataset.type || 'all';
       route();
@@ -2009,6 +2155,16 @@
         confirmLabel: 'Leave project',
         danger: true,
       }).then((ok) => ok && leaveProject(p));
+    } else if (a === 'proj-view') {
+      ui.projView = el.dataset.view;
+      writePref('rpt-view', ui.projView);
+      route();
+    } else if (a === 'people-view') {
+      ui.peopleView = el.dataset.view;
+      route();
+    } else if (a === 'clear-search') {
+      ui.search = '';
+      route();
     } else if (a === 'toggle-select') {
       ui.selecting = !ui.selecting;
       ui.selected = new Set();
@@ -2018,8 +2174,6 @@
       route();
     } else if (a === 'remove-selected') {
       confirmRemove([...(ui.selected || [])]);
-    } else if (a === 'remove-examples') {
-      confirmRemove(state.projects.filter((x) => x.example && ownsProject(x)).map((x) => x.id));
     } else if (a === 'accept-invite' || a === 'decline-invite') {
       el.disabled = true;
       respondInvite(el.dataset.pid, a === 'accept-invite');
@@ -2188,12 +2342,26 @@
     reader.readAsText(file);
   }
 
+  function onSearchInput(e) {
+    const el = e.target;
+    if (el.id !== 'project-search' && el.id !== 'people-search') return;
+    ui.search = el.value;
+    const pos = el.selectionStart;
+    route();
+    const again = document.getElementById(el.id);
+    if (again) {
+      again.focus();
+      again.setSelectionRange(pos, pos);
+    }
+  }
+
   function init() {
     state = load();
     document.getElementById('storage-warning').hidden = storageOk;
     document.addEventListener('click', onClick);
     document.addEventListener('change', onChange);
     document.addEventListener('submit', onSubmit);
+    document.addEventListener('input', onSearchInput);
     document.getElementById('import-file').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
       if (file) importData(file);
