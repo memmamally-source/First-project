@@ -31,6 +31,29 @@
     { id: 'other', label: 'Other study type', family: 'primary' },
   ];
   const TYPE_IDS = STUDY_TYPES.map((t) => t.id);
+
+  // Authorship roles. Contributors are thanked in the acknowledgements, not listed as authors.
+  const ROLES = [
+    { id: 'first', label: 'First author', plural: 'First author' },
+    { id: 'coauthor', label: 'Co-author', plural: 'Co-authors' },
+    { id: 'contributor', label: 'Contributor', plural: 'Contributors · acknowledged' },
+  ];
+  const ROLE_IDS = ROLES.map((r) => r.id);
+  const roleLabel = (id) => (ROLES.find((r) => r.id === id) || ROLES[1]).label;
+
+  // Older saves stored a free-text role; map it onto the fixed roles and keep any extra detail as a note.
+  function roleFrom(raw) {
+    const r = str(raw).trim().toLowerCase();
+    if (ROLE_IDS.includes(r)) return r;
+    if (/lead|first/.test(r)) return 'first';
+    if (/contribut|acknowledg/.test(r)) return 'contributor';
+    return 'coauthor';
+  }
+  function roleNote(m) {
+    if (str(m.note)) return str(m.note);
+    const r = str(m.role).trim();
+    return !r || ROLE_IDS.includes(r) || /^(lead author|first author|co-?author|contributor)$/i.test(r) ? '' : r;
+  }
   const FAMILY_LABEL = { review: 'Reviews', primary: 'Primary studies' };
   // Primary studies move through the same six steps, named for their own workflow.
   const PRIMARY_STAGE_LABELS = { protocol: 'Protocol & ethics', screening: 'Data collection', extraction: 'Analysis' };
@@ -152,7 +175,7 @@
           studyType: TYPE_IDS.includes(p.studyType) ? p.studyType : '',
           team: (Array.isArray(p.team) ? p.team : [])
             .filter((m) => m && str(m.name).trim())
-            .map((m) => ({ id: m.id ? String(m.id) : uid(), name: str(m.name).trim(), role: str(m.role) })),
+            .map((m) => ({ id: m.id ? String(m.id) : uid(), name: str(m.name).trim(), role: roleFrom(m.role), note: roleNote(m) })),
           nextAction: str(p.nextAction),
           nextActionOwner: str(p.nextActionOwner),
           nextActionDue: date(p.nextActionDue),
@@ -272,9 +295,10 @@
       stage: 'screening',
       studyType: 'systematic-review',
       team: [
-        { id: uid(), name: 'You', role: 'Lead author' },
-        { id: uid(), name: 'Dr. Patel', role: 'Supervisor' },
-        { id: uid(), name: 'Sam Lee', role: 'Second screener' },
+        { id: uid(), name: 'You', role: 'first' },
+        { id: uid(), name: 'Dr. Patel', role: 'coauthor', note: 'Supervisor' },
+        { id: uid(), name: 'Sam Lee', role: 'coauthor', note: 'Second screener' },
+        { id: uid(), name: 'Lindiwe Dube', role: 'contributor', note: 'Librarian, search strategy' },
       ],
       nextAction: 'Finish full-text screening',
       nextActionOwner: 'You',
@@ -287,8 +311,8 @@
       stage: 'writing',
       studyType: 'scoping-review',
       team: [
-        { id: uid(), name: 'You', role: 'Lead author' },
-        { id: uid(), name: 'Dr. Patel', role: 'Supervisor' },
+        { id: uid(), name: 'You', role: 'first' },
+        { id: uid(), name: 'Dr. Patel', role: 'coauthor', note: 'Supervisor' },
       ],
       nextAction: 'Send draft to supervisor',
       nextActionOwner: 'You',
@@ -300,8 +324,8 @@
       stage: 'submitted',
       studyType: 'meta-analysis',
       team: [
-        { id: uid(), name: 'You', role: 'Co-author' },
-        { id: uid(), name: 'Maria Gomez', role: 'Lead author' },
+        { id: uid(), name: 'Maria Gomez', role: 'first' },
+        { id: uid(), name: 'You', role: 'coauthor' },
       ],
       nextAction: 'Respond to reviewer 2 comments',
       nextActionOwner: 'Maria Gomez',
@@ -316,8 +340,8 @@
       stage: 'screening',
       studyType: 'cross-sectional',
       team: [
-        { id: uid(), name: 'You', role: 'Lead author' },
-        { id: uid(), name: 'Sam Lee', role: 'Statistician' },
+        { id: uid(), name: 'You', role: 'first' },
+        { id: uid(), name: 'Sam Lee', role: 'coauthor', note: 'Statistician' },
       ],
       nextAction: 'Send survey reminder to participating units',
       nextActionOwner: 'You',
@@ -342,7 +366,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STAGES, STUDY_TYPES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
+    module.exports = { STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
   }
   if (typeof document === 'undefined') return;
 
@@ -490,6 +514,8 @@
   }
 
   const stagePill = (id, typeId) => `<span class="pill">${esc(stageLabel(id, typeId))}</span>`;
+
+  const firstAuthors = (p) => p.team.filter((m) => m.role === 'first').map((m) => m.name).join(', ');
 
   function typeBadge(typeId) {
     const t = studyType(typeId);
@@ -798,7 +824,7 @@
       .sort((a, b) => STAGE_IDS.indexOf(a.stage) - STAGE_IDS.indexOf(b.stage) || a.title.localeCompare(b.title))
       .map((p) => `
         <tr>
-          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a></td>
+          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a>${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}</td>
           <td>${typeBadge(p.studyType)}</td>
           <td>${stageMeter(p.stage, p.studyType)}</td>
           <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${p.nextActionOwner ? `<div class="meta">${esc(p.nextActionOwner)}</div>` : ''}</td>
@@ -897,6 +923,7 @@
               <a class="card" href="#/project/${esc(p.id)}">
                 <div class="card-title">${esc(p.title)}</div>
                 <div class="card-type">${typeBadge(p.studyType)}</div>
+                ${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}
                 ${p.journal.target ? `<div class="meta">→ ${esc(p.journal.target)}</div>` : ''}
                 <div class="card-next">${p.nextAction ? `<strong>Next:</strong> ${esc(p.nextAction)}` : '<span class="muted">No next action</span>'}</div>
                 <div class="card-foot">
@@ -1014,16 +1041,31 @@
 
         <section class="panel">
           <h2>Team</h2>
-          ${p.team.length ? `<ul class="team">${p.team.map((m) => `
-            <li>
-              <span class="avatar" aria-hidden="true">${esc(initials(m.name))}</span>
-              <span class="grow"><strong>${esc(m.name)}</strong>${m.role ? ` <span class="muted">· ${esc(m.role)}</span>` : ''}
-                <span class="meta">${openTasks(p.id).filter((t) => sameName(t.owner, m.name)).length} open tasks</span></span>
-              <button class="icon-btn" data-action="remove-member" data-id="${esc(m.id)}" aria-label="Remove ${esc(m.name)}" title="Remove">×</button>
-            </li>`).join('')}</ul>` : '<p class="muted">No co-authors yet.</p>'}
+          ${p.team.length ? ROLES.map((r) => {
+            const members = p.team.filter((m) => m.role === r.id);
+            if (!members.length) return '';
+            return `
+              <h3 class="subhead team-head">${esc(r.plural)}</h3>
+              <ul class="team">${members.map((m) => {
+                const n = openTasks(p.id).filter((t) => sameName(t.owner, m.name)).length;
+                return `
+                <li>
+                  <span class="avatar avatar-${m.role}" aria-hidden="true">${esc(initials(m.name))}</span>
+                  <span class="grow"><strong>${esc(m.name)}</strong>${m.note ? ` <span class="muted">· ${esc(m.note)}</span>` : ''}
+                    <span class="meta">${n} open task${n === 1 ? '' : 's'}</span></span>
+                  <select class="role-select" data-member-role="${esc(m.id)}" aria-label="Role for ${esc(m.name)}">
+                    ${ROLES.map((x) => `<option value="${x.id}"${x.id === m.role ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}
+                  </select>
+                  <button class="icon-btn" data-action="remove-member" data-id="${esc(m.id)}" aria-label="Remove ${esc(m.name)}" title="Remove">×</button>
+                </li>`;
+              }).join('')}</ul>`;
+          }).join('') : '<p class="muted">No authors yet. Add the first author below.</p>'}
           <form class="add-member" data-form="add-member">
             <input name="name" list="names-all" placeholder="Name" required aria-label="Name">
-            <input name="role" placeholder="Role (e.g. Second screener)" aria-label="Role">
+            <div class="segmented role-pick" role="radiogroup" aria-label="Role">
+              ${ROLES.map((r) => `
+                <label><input type="radio" name="role" value="${r.id}"${r.id === (p.team.some((m) => m.role === 'first') ? 'coauthor' : 'first') ? ' checked' : ''}><span>${esc(r.label)}</span></label>`).join('')}
+            </div>
             <button class="btn">Add</button>
           </form>
           <label class="field">Notes
@@ -1142,7 +1184,7 @@
         if (!res) return;
         const np = newProject(res.text);
         np.studyType = TYPE_IDS.includes(res.choice) ? res.choice : '';
-        if (state.me) np.team.push({ id: uid(), name: state.me, role: 'Lead author' });
+        if (state.me) np.team.push({ id: uid(), name: state.me, role: 'first', note: '' });
         state.projects.push(np);
         save();
         location.hash = `#/project/${np.id}`;
@@ -1208,6 +1250,15 @@
   // Field edits save in place without re-rendering, so focus isn't lost while moving between inputs.
   function onChange(e) {
     const el = e.target;
+    if (el.dataset.memberRole) {
+      const p = currentProject();
+      const m = p && p.team.find((x) => x.id === el.dataset.memberRole);
+      if (!m) return;
+      m.role = roleFrom(el.value);
+      touch(p);
+      commit();
+      return;
+    }
     if (el.dataset.setting === 'type-filter') {
       ui.typeFilter = el.value;
       route();
@@ -1256,7 +1307,7 @@
       const name = String(f.get('name') || '').trim();
       if (!name) return;
       if (!p.team.some((m) => sameName(m.name, name))) {
-        p.team.push({ id: uid(), name, role: String(f.get('role') || '').trim() });
+        p.team.push({ id: uid(), name, role: roleFrom(f.get('role')), note: '' });
       }
     }
     touch(p);
