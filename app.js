@@ -502,8 +502,10 @@
     try {
       const { data, error } = await sb.client.rpc('my_invites', {});
       sb.invites = error ? [] : data || [];
+      sb.inviteError = error ? error.message || 'unknown error' : '';
     } catch (e) {
       sb.invites = [];
+      sb.inviteError = (e && e.message) || 'no connection';
     }
     updateInviteBadge();
     return sb.invites;
@@ -545,6 +547,13 @@
   }
 
   function invitesHTML() {
+    if (isSb() && sb.inviteError) {
+      return `
+        <div class="invite-error" role="alert">
+          <span>Couldn't check for project invitations (${esc(sb.inviteError)}).</span>
+          <button class="btn small" data-action="check-invites">Check again</button>
+        </div>`;
+    }
     if (!isSb() || !sb.invites.length) return '';
     return `
       <section class="panel invite-panel" aria-label="Invitations">
@@ -2174,6 +2183,9 @@
       route();
     } else if (a === 'remove-selected') {
       confirmRemove([...(ui.selected || [])]);
+    } else if (a === 'check-invites') {
+      el.disabled = true;
+      loadInvites().then(() => route());
     } else if (a === 'accept-invite' || a === 'decline-invite') {
       el.disabled = true;
       respondInvite(el.dataset.pid, a === 'accept-invite');

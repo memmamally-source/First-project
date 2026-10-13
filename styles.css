@@ -632,6 +632,11 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
 .role-assigned { background: var(--soon-soft); color: var(--soon-text); }
 
 /* Invitations */
+.invite-error {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+  padding: 10px 14px; border-radius: 10px; background: var(--critical-soft); color: var(--critical-text); font-size: 0.9rem;
+}
+.invite-error .btn { margin-left: auto; }
 .invite-panel { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .invites { list-style: none; margin: 0; padding: 0; }
 .invites li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--grid); flex-wrap: wrap; }
