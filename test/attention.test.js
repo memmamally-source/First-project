@@ -63,3 +63,24 @@ test('dashboardStats counts tiles, stages and workload', () => {
     { name: 'Ben', open: 1, overdue: 0 },
   ]);
 });
+
+test('study types: stage names, filtering and counts', () => {
+  const { stageLabel, stageLabelFor, filterByType, typeCounts } = require('../app.js');
+  assert.strictEqual(stageLabel('screening', 'meta-analysis'), 'Screening');
+  assert.strictEqual(stageLabel('screening', 'cross-sectional'), 'Data collection');
+  assert.strictEqual(stageLabel('extraction', 'cohort'), 'Analysis');
+  assert.strictEqual(stageLabel('writing', 'cohort'), 'Writing');
+  const s = normalizeState({ projects: [
+    { id: 'a', studyType: 'meta-analysis' }, { id: 'b', studyType: 'cross-sectional' },
+    { id: 'c', studyType: 'bogus' },
+  ], tasks: [{ id: 't', projectId: 'b', title: 'x' }] });
+  assert.strictEqual(s.projects[2].studyType, '');
+  assert.strictEqual(stageLabelFor('screening', s.projects), 'Screening / Data collection');
+  assert.strictEqual(stageLabelFor('screening', [s.projects[1]]), 'Data collection');
+  const prim = filterByType(s, 'primary');
+  assert.deepStrictEqual(prim.projects.map((p) => p.id), ['b']);
+  assert.strictEqual(prim.tasks.length, 1);
+  assert.deepStrictEqual(filterByType(s, 'review').projects.map((p) => p.id), ['a']);
+  assert.deepStrictEqual(filterByType(s, 'none').projects.map((p) => p.id), ['c']);
+  assert.deepStrictEqual(typeCounts(s.projects).map((t) => [t.id, t.count]), [['meta-analysis', 1], ['cross-sectional', 1], ['none', 1]]);
+});
