@@ -20,6 +20,12 @@ Setting up a Supabase project: run `supabase/schema.sql` in the SQL Editor, set 
 
 Moving projects from the browser-only or Claude version: click **Export backup** there, then **Import** on the website. Importing adds projects; it never replaces existing ones.
 
+## Install on a phone
+
+The site is an installable web app (manifest, icons and an offline-capable shell in `sw.js`).
+- iPhone: open the site in Safari → Share → Add to Home Screen.
+- Android: open it in Chrome → ⋮ menu → Install app (or Add to Home screen).
+
 ## Run it
 
 Open `index.html` in a browser. You don't need to install anything. Click **Load example projects** to try it out.

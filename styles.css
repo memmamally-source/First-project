@@ -678,3 +678,37 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
   .auth-form { padding: 22px; }
   .brand-author { display: none; }
 }
+
+/* ---------- Phone: app-style bottom tab bar ---------- */
+@media (max-width: 760px) {
+  .sidebar { padding: 10px 16px; gap: 6px 12px; }
+  .brand { font-size: 0.95rem; }
+  .brand-mark { width: 28px; height: 28px; }
+  .sidebar-foot { font-size: 0.78rem; gap: 4px 12px; }
+  #sync-status { display: none; }
+  .account { flex-direction: row; align-items: center; gap: 10px; border-bottom: none; padding-bottom: 0; margin-bottom: 0; width: auto; }
+
+  .nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
+    padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
+    background: var(--surface); border-top: 1px solid var(--border);
+  }
+  .nav a { position: relative; flex-direction: column; gap: 2px; padding: 6px 0; font-size: 0.72rem; justify-content: center; border-radius: 10px; }
+  .nav a svg { width: 22px; height: 22px; }
+  .nav a.active { background: none; }
+  .nav a.active svg { color: var(--accent); }
+  .nav-badge { position: absolute; top: 2px; left: calc(50% + 6px); margin: 0; }
+
+  .new-btn {
+    position: fixed; z-index: 31; right: 16px; bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    width: auto; margin: 0; padding: 12px 18px; border-radius: 999px; font-size: 0.95rem;
+    box-shadow: 0 6px 18px rgba(15, 39, 71, 0.3);
+  }
+  main { padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px)); }
+  .nav a, .new-btn, .btn, .card, tr.row-link { -webkit-tap-highlight-color: transparent; }
+  .page-head [data-action="new-project"] { display: none; }
+  .project-list th:nth-child(n+3), .project-list td:nth-child(n+3) { display: none; }
+  .project-list:has(.cell-check) th:nth-child(3), .project-list:has(.cell-check) td:nth-child(3) { display: table-cell; }
+  .sb-mode .shell:not(.ready) ~ * .nav { display: none; }
+}

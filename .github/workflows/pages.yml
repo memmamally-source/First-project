@@ -30,7 +30,7 @@ jobs:
         env:
           TZ: Europe/London
       - name: Collect site files
-        run: mkdir _site && cp index.html app.js styles.css config.js _site/
+        run: mkdir _site && cp -r index.html app.js styles.css config.js manifest.webmanifest sw.js icons _site/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
