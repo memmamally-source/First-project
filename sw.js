@@ -1,6 +1,6 @@
 // Offline support for the installed app. Pages and code are fetched fresh when online
 // (so updates show straight away) and served from the cache when offline.
-const CACHE = 'rpt-v1';
+const CACHE = 'rpt-__VERSION__'; // replaced with the commit id when the site is published
 const SHELL = ['./', './index.html', './app.js', './styles.css', './config.js', './manifest.webmanifest', './icons/icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -22,8 +22,9 @@ self.addEventListener('fetch', (e) => {
   const sameSite = url.origin === self.location.origin;
   const library = url.hostname === 'cdn.jsdelivr.net';
   if (!sameSite && !library) return; // sign-in and data always go straight to Supabase
+  // 'no-cache' asks the server whether a file changed, so a new version is never hidden behind an old copy.
   e.respondWith(
-    fetch(req)
+    fetch(req, sameSite ? { cache: 'no-cache' } : undefined)
       .then((res) => {
         if (res.ok) {
           const copy = res.clone();
