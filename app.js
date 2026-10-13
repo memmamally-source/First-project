@@ -106,9 +106,9 @@
 
   const sameName = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
-  // The home screen: everything due within a week (or overdue), revision deadlines
-  // within two weeks, and active projects that have no next action written down.
-  function attention(state, today, opts) {
+  // Every dated, open item across projects: tasks, next actions, and revision deadlines
+  // of submitted papers. `days` is relative to today (negative = overdue).
+  function deadlines(state, today, opts) {
     const mineOnly = !!(opts && opts.mineOnly && state.me);
     const keep = (owner) => !mineOnly || sameName(owner, state.me);
     const byId = new Map(state.projects.map((p) => [p.id, p]));
@@ -118,37 +118,74 @@
       if (t.done || !t.due || !keep(t.owner)) continue;
       const p = byId.get(t.projectId);
       if (!p) continue;
-      const days = daysUntil(t.due, today);
-      if (days <= WEEK_DAYS) {
-        items.push({ kind: 'task', id: t.id, projectId: p.id, project: p.title, title: t.title, owner: t.owner, due: t.due, days });
-      }
+      items.push({ kind: 'task', id: t.id, projectId: p.id, project: p.title, title: t.title, owner: t.owner, due: t.due, days: daysUntil(t.due, today) });
     }
-
     for (const p of state.projects) {
       if (p.nextAction.trim() && p.nextActionDue && keep(p.nextActionOwner)) {
-        const days = daysUntil(p.nextActionDue, today);
-        if (days <= WEEK_DAYS) {
-          items.push({ kind: 'next', id: p.id, projectId: p.id, project: p.title, title: p.nextAction, owner: p.nextActionOwner, due: p.nextActionDue, days });
-        }
+        items.push({ kind: 'next', id: p.id, projectId: p.id, project: p.title, title: p.nextAction, owner: p.nextActionOwner, due: p.nextActionDue, days: daysUntil(p.nextActionDue, today) });
       }
       if (p.stage === 'submitted' && p.journal.revisionDue && !mineOnly) {
-        const days = daysUntil(p.journal.revisionDue, today);
-        if (days <= REVISION_WINDOW_DAYS) {
-          const where = p.journal.target ? ` for ${p.journal.target}` : '';
-          items.push({ kind: 'revision', id: p.id, projectId: p.id, project: p.title, title: `Revisions due${where}`, owner: '', due: p.journal.revisionDue, days });
-        }
+        const where = p.journal.target ? ` for ${p.journal.target}` : '';
+        items.push({ kind: 'revision', id: p.id, projectId: p.id, project: p.title, title: `Revisions due${where}`, owner: '', due: p.journal.revisionDue, days: daysUntil(p.journal.revisionDue, today) });
       }
     }
+    items.sort((x, y) => x.days - y.days || x.project.localeCompare(y.project));
+    return items;
+  }
 
-    items.sort((a, b) => a.days - b.days || a.project.localeCompare(b.project));
+  // The home screen: everything due within a week (or overdue), revision deadlines
+  // within two weeks, and active projects that have no next action written down.
+  function attention(state, today, opts) {
+    const mineOnly = !!(opts && opts.mineOnly && state.me);
+    const items = deadlines(state, today, opts).filter(
+      (i) => i.days <= (i.kind === 'revision' ? REVISION_WINDOW_DAYS : WEEK_DAYS)
+    );
     const noNextAction = mineOnly
       ? []
       : state.projects.filter((p) => p.stage !== 'submitted' && !p.nextAction.trim());
-
     return {
       overdue: items.filter((i) => i.days < 0),
       upcoming: items.filter((i) => i.days >= 0),
       noNextAction,
+    };
+  }
+
+  // Figures for the dashboard tiles and charts.
+  function dashboardStats(state, today, opts) {
+    const mineOnly = !!(opts && opts.mineOnly && state.me);
+    const att = attention(state, today, opts);
+    const active = state.projects.filter((p) => p.stage !== 'submitted');
+    const weekAgo = addDays(today, -WEEK_DAYS);
+    const doneThisWeek = state.tasks.filter(
+      (t) => t.done && t.doneAt && t.doneAt.slice(0, 10) >= weekAgo && (!mineOnly || sameName(t.owner, state.me))
+    ).length;
+
+    const byStage = STAGES.map((s) => ({ ...s, projects: state.projects.filter((p) => p.stage === s.id) }));
+
+    // Open tasks per person, merging names case-insensitively; unassigned grouped last.
+    const people = new Map();
+    for (const t of state.tasks) {
+      if (t.done || !state.projects.some((p) => p.id === t.projectId)) continue;
+      const name = t.owner.trim();
+      const key = name ? name.toLowerCase() : '';
+      if (!people.has(key)) people.set(key, { name: name || 'Unassigned', open: 0, overdue: 0 });
+      const row = people.get(key);
+      row.open += 1;
+      if (t.due && daysUntil(t.due, today) < 0) row.overdue += 1;
+    }
+    const workload = [...people.entries()]
+      .sort(([ka, a], [kb, b]) => (ka === '') - (kb === '') || b.open - a.open || a.name.localeCompare(b.name))
+      .map(([, row]) => row);
+
+    return {
+      activeCount: active.length,
+      submittedCount: state.projects.length - active.length,
+      overdueCount: att.overdue.length,
+      dueSoonCount: att.upcoming.filter((i) => i.days <= WEEK_DAYS).length,
+      doneThisWeek,
+      byStage,
+      workload,
+      attention: att,
     };
   }
 
@@ -209,7 +246,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STAGES, attention, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
+    module.exports = { STAGES, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
   }
   if (typeof document === 'undefined') return;
 
@@ -272,7 +309,15 @@
     return `<span class="due ${cls}" title="${esc(fmtDate(iso))}">${esc(d <= REVISION_WINDOW_DAYS ? relDays(d) : fmtDate(iso))}</span>`;
   }
 
-  const stagePill = (id) => `<span class="pill stage-${esc(id)}">${esc(stageLabel(id))}</span>`;
+  const stagePill = (id) => `<span class="pill">${esc(stageLabel(id))}</span>`;
+  function stageMeter(id) {
+    const idx = STAGE_IDS.indexOf(id);
+    return `
+      <div class="meter" role="img" aria-label="${esc(`Stage ${idx + 1} of ${STAGES.length}: ${stageLabel(id)}`)}">
+        <span class="meter-label">${esc(stageLabel(id))}</span>
+        <span class="meter-steps">${STAGES.map((_, i) => `<i class="${i <= idx ? 'on' : ''}"></i>`).join('')}</span>
+      </div>`;
+  }
   const findProject = (id) => state.projects.find((p) => p.id === id);
   const openTasks = (pid) => state.tasks.filter((t) => t.projectId === pid && !t.done);
 
@@ -296,11 +341,200 @@
 
   // ---------- Views ----------
 
+  // ---------- Dashboard ----------
+
+  const TIMELINE_DAYS = 30;
+  const KIND_LABEL = { task: 'Task', next: 'Next action', revision: 'Revision deadline' };
+  const ICON = {
+    alert: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 15 14H1L8 1.5Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.5M8 11.6v.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+    check: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m5 8.2 2 2 4-4.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+
+  // Tooltip content is kept out of the DOM and written with textContent (titles are user data).
+  let tips = new Map();
+  function tipAttr(title, rows) {
+    const id = 'tip' + tips.size;
+    tips.set(id, { title, rows });
+    return `data-tip="${id}"`;
+  }
+
+  function showTip(el) {
+    const tip = tips.get(el.dataset.tip);
+    const box = document.getElementById('tooltip');
+    if (!tip || !box) return;
+    box.replaceChildren();
+    const head = document.createElement('div');
+    head.className = 'tip-title';
+    head.textContent = tip.title;
+    box.appendChild(head);
+    for (const r of tip.rows) {
+      const row = document.createElement('div');
+      row.className = 'tip-row';
+      if (r.kind) {
+        const key = document.createElement('span');
+        key.className = `key key-${r.kind}`;
+        row.appendChild(key);
+      }
+      const val = document.createElement('strong');
+      val.textContent = r.value;
+      row.appendChild(val);
+      if (r.label) {
+        const lab = document.createElement('span');
+        lab.className = 'tip-label';
+        lab.textContent = r.label;
+        row.appendChild(lab);
+      }
+      box.appendChild(row);
+    }
+    box.hidden = false;
+    const rect = el.getBoundingClientRect();
+    const w = box.offsetWidth;
+    const h = box.offsetHeight;
+    let left = rect.left + rect.width / 2 - w / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    let top = rect.top - h - 8;
+    if (top < 8) top = rect.bottom + 8;
+    box.style.left = `${left + window.scrollX}px`;
+    box.style.top = `${top + window.scrollY}px`;
+  }
+
+  function hideTip() {
+    const box = document.getElementById('tooltip');
+    if (box) box.hidden = true;
+  }
+
+  function tile(label, value, sub, mod, icon) {
+    return `
+      <div class="tile ${mod || ''}">
+        <div class="tile-label">${icon ? ICON[icon] : ''}${esc(label)}</div>
+        <div class="tile-value">${esc(value)}</div>
+        <div class="tile-sub">${sub}</div>
+      </div>`;
+  }
+
+  // One lane per project; overdue items collapse into a band left of "today".
+  function timelineHTML(items, t) {
+    const inRange = items.filter((i) => i.days <= TIMELINE_DAYS);
+    if (!inRange.length) return `<p class="muted">No deadlines in the next ${TIMELINE_DAYS} days.</p>`;
+    const OVERDUE_W = 9; // % of the track reserved for the overdue band
+    const x = (days) => (days < 0 ? OVERDUE_W / 2 : OVERDUE_W + 2 + (days / TIMELINE_DAYS) * (98 - OVERDUE_W - 2));
+
+    const lanes = new Map();
+    for (const i of inRange) {
+      if (!lanes.has(i.projectId)) lanes.set(i.projectId, { project: i.project, id: i.projectId, groups: new Map() });
+      const key = i.days < 0 ? 'overdue' : String(i.days);
+      const g = lanes.get(i.projectId).groups;
+      if (!g.has(key)) g.set(key, []);
+      g.get(key).push(i);
+    }
+
+    const ticks = [0, 7, 14, 21, 28].map((d) => `
+      <span class="tick${d === 0 ? ' tick-today' : ''}" style="left:${x(d)}%">${d === 0 ? 'Today' : esc(parseISO(addDays(t, d)).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }))}</span>`).join('');
+
+    const rows = [...lanes.values()].map((lane) => {
+      const dots = [...lane.groups.entries()].map(([key, list]) => {
+        const first = list[0];
+        const when = key === 'overdue' ? 'Overdue' : `${fmtDate(first.due)} · ${relDays(first.days)}`;
+        const tip = tipAttr(when, list.map((i) => ({
+          kind: i.kind,
+          value: i.title,
+          label: [KIND_LABEL[i.kind], i.owner, key === 'overdue' ? relDays(i.days) : ''].filter(Boolean).join(' · '),
+        })));
+        const label = `${lane.project}: ${list.map((i) => i.title).join('; ')}, ${when}`;
+        return `<button class="dot dot-${first.kind}${key === 'overdue' ? ' is-overdue' : ''}" style="left:${x(first.days)}%" ${tip} aria-label="${esc(label)}">${list.length > 1 ? `<span class="dot-count">${list.length}</span>` : ''}</button>`;
+      }).join('');
+      return `
+        <div class="lane">
+          <a class="lane-label" href="#/project/${esc(lane.id)}" title="${esc(lane.project)}">${esc(lane.project)}</a>
+          <div class="lane-track">${dots}</div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="legend" aria-hidden="true">
+        <span><i class="key key-task"></i>Task</span>
+        <span><i class="key key-next"></i>Next action</span>
+        <span><i class="key key-revision"></i>Revision deadline</span>
+        <span><i class="key key-band"></i>Overdue</span>
+      </div>
+      <div class="timeline" style="--od:${OVERDUE_W}%;--today:${x(0)}%">
+        <div class="lane lane-axis">
+          <span class="lane-label"></span>
+          <div class="lane-track">
+            ${ticks}
+          </div>
+        </div>
+        ${rows}
+      </div>`;
+  }
+
+  function pipelineHTML(byStage) {
+    const max = Math.max(1, ...byStage.map((s) => s.projects.length));
+    return `<div class="bars">${byStage.map((s, i) => {
+      const n = s.projects.length;
+      const tip = tipAttr(`${s.label} · ${n} project${n === 1 ? '' : 's'}`, s.projects.map((p) => ({ value: p.title })));
+      return `
+        <div class="bar-row">
+          <span class="bar-label"><span class="step-no">${i + 1}</span>${esc(s.label)}</span>
+          <button class="bar-track" ${tip} aria-label="${esc(`${s.label}: ${n}`)}">
+            ${n ? `<span class="bar" style="width:${(n / max) * 100}%"></span>` : ''}
+            <span class="bar-value">${n}</span>
+          </button>
+        </div>`;
+    }).join('')}</div>`;
+  }
+
+  function workloadHTML(rows) {
+    if (!rows.length) return '<p class="muted">No open tasks.</p>';
+    const max = Math.max(1, ...rows.map((r) => r.open));
+    return `
+      <div class="legend" aria-hidden="true">
+        <span><i class="key key-ontrack"></i>On track</span>
+        <span><i class="key key-late"></i>Overdue</span>
+      </div>
+      <div class="bars">${rows.map((r) => {
+        const ok = r.open - r.overdue;
+        const tip = tipAttr(r.name, [
+          { kind: 'ontrack', value: String(ok), label: 'on track' },
+          { kind: 'late', value: String(r.overdue), label: 'overdue' },
+        ]);
+        return `
+          <div class="bar-row">
+            <span class="bar-label" title="${esc(r.name)}">${esc(r.name)}</span>
+            <button class="bar-track" ${tip} aria-label="${esc(`${r.name}: ${r.open} open, ${r.overdue} overdue`)}">
+              <span class="stack" style="width:${(r.open / max) * 100}%">
+                ${ok ? `<span class="seg seg-ontrack" style="flex:${ok}"></span>` : ''}
+                ${r.overdue ? `<span class="seg seg-late" style="flex:${r.overdue}"></span>` : ''}
+              </span>
+              <span class="bar-value">${r.open}</span>
+            </button>
+          </div>`;
+      }).join('')}</div>`;
+  }
+
+  function actionItem(i) {
+    return `
+      <li class="item ${i.days < 0 ? 'is-overdue' : ''}">
+        ${i.kind === 'task'
+          ? `<input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(i.id)}" aria-label="Mark “${esc(i.title)}” done">`
+          : `<span class="kind-key"><i class="key key-${i.kind}"></i></span>`}
+        <div class="item-body">
+          <div class="item-title">${esc(i.title)}</div>
+          <div class="meta">
+            <span>${esc(KIND_LABEL[i.kind])}</span>
+            <span>·</span>
+            <a href="#/project/${esc(i.projectId)}">${esc(i.project)}</a>
+            ${i.owner ? `<span>· ${esc(i.owner)}</span>` : ''}
+          </div>
+        </div>
+        ${dueBadge(i.due)}
+      </li>`;
+  }
+
   function renderHome() {
     setNav('home');
+    tips = new Map();
     const t = today();
-    const att = attention(state, t, { mineOnly: ui.mineOnly });
-    const end = addDays(t, WEEK_DAYS);
 
     if (!state.projects.length) {
       app().innerHTML = `
@@ -315,76 +549,86 @@
       return;
     }
 
-    const item = (i) => `
-      <li class="item ${i.days < 0 ? 'is-overdue' : ''}">
-        ${i.kind === 'task'
-          ? `<input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(i.id)}" aria-label="Mark done">`
-          : `<span class="kind kind-${i.kind}">${i.kind === 'next' ? 'Next' : 'Rev'}</span>`}
-        <div class="item-body">
-          <div class="item-title">${esc(i.title)}</div>
-          <div class="meta">
-            <a href="#/project/${esc(i.projectId)}">${esc(i.project)}</a>
-            ${i.owner ? `<span>· ${esc(i.owner)}</span>` : ''}
-          </div>
-        </div>
-        ${dueBadge(i.due)}
-      </li>`;
-
-    const section = (title, list, emptyText) => `
-      <section class="panel">
-        <h2>${title} <span class="count">${list.length}</span></h2>
-        ${list.length ? `<ul class="items">${list.map(item).join('')}</ul>` : `<p class="muted">${emptyText}</p>`}
-      </section>`;
+    const st = dashboardStats(state, t, { mineOnly: ui.mineOnly });
+    const att = st.attention;
+    const items = deadlines(state, t, { mineOnly: ui.mineOnly });
+    const actions = [...att.overdue, ...att.upcoming];
 
     const overview = state.projects
       .slice()
       .sort((a, b) => STAGE_IDS.indexOf(a.stage) - STAGE_IDS.indexOf(b.stage) || a.title.localeCompare(b.title))
       .map((p) => `
         <tr>
-          <td><a href="#/project/${esc(p.id)}">${esc(p.title)}</a>${p.journal.target ? `<div class="meta">${esc(p.journal.target)}</div>` : ''}</td>
-          <td>${stagePill(p.stage)}</td>
-          <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">—</span>'}${p.nextActionOwner ? `<div class="meta">${esc(p.nextActionOwner)}</div>` : ''}</td>
-          <td>${dueBadge(p.nextActionDue)}</td>
+          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a></td>
+          <td>${stageMeter(p.stage)}</td>
+          <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${p.nextActionOwner ? `<div class="meta">${esc(p.nextActionOwner)}</div>` : ''}</td>
+          <td>${dueBadge(p.nextActionDue) || '<span class="muted">—</span>'}</td>
           <td class="num">${openTasks(p.id).length}</td>
+          <td>${p.journal.target ? esc(p.journal.target) : '<span class="muted">—</span>'}</td>
         </tr>`)
       .join('');
 
     app().innerHTML = `
       <header class="page-head">
         <div>
+          <p class="eyebrow">${esc(parseISO(t).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }))}</p>
           <h1>What needs my attention this week?</h1>
-          <p class="muted">${esc(fmtDate(t))} – ${esc(fmtDate(end))}</p>
         </div>
         <div class="row">
-          <label class="field-inline">I am
+          <label class="field-inline">Viewing as
             <input list="names-all" data-setting="me" value="${esc(state.me)}" placeholder="Your name" size="12">
           </label>
           ${namesDatalist('names-all')}
-          <label class="toggle ${state.me ? '' : 'disabled'}" title="${state.me ? '' : 'Enter your name first'}">
-            <input type="checkbox" data-action="toggle-mine" ${ui.mineOnly ? 'checked' : ''} ${state.me ? '' : 'disabled'}> Only mine
-          </label>
+          <div class="segmented" role="group" aria-label="Scope">
+            <button data-action="set-mine" data-mine="0" aria-pressed="${!ui.mineOnly}">Everyone</button>
+            <button data-action="set-mine" data-mine="1" aria-pressed="${ui.mineOnly}" ${state.me ? '' : 'disabled title="Enter your name first"'}>Only mine</button>
+          </div>
         </div>
       </header>
-      <div class="grid-2">
-        ${section('Overdue', att.overdue, 'Nothing overdue.')}
-        ${section('Due soon', att.upcoming, 'Nothing due this week.')}
-      </div>
-      ${att.noNextAction.length ? `
+
+      <section class="tiles" aria-label="Summary">
+        ${tile('Active projects', st.activeCount, `${st.submittedCount} submitted · under review`)}
+        ${tile('Overdue', st.overdueCount, st.overdueCount ? 'Past their due date' : 'Nothing overdue', st.overdueCount ? 'tile-critical' : 'tile-good', st.overdueCount ? 'alert' : 'check')}
+        ${tile('Due in 7 days', st.dueSoonCount, `Through ${esc(fmtDate(addDays(t, WEEK_DAYS)))}`)}
+        ${tile('Tasks completed', st.doneThisWeek, 'In the last 7 days')}
+      </section>
+
+      <div class="dash-grid">
+        <section class="panel span-2">
+          <div class="panel-head"><h2>Deadlines · next ${TIMELINE_DAYS} days</h2></div>
+          ${timelineHTML(items, t)}
+        </section>
         <section class="panel">
-          <h2>Projects without a next action <span class="count">${att.noNextAction.length}</span></h2>
-          <ul class="items">${att.noNextAction.map((p) => `
-            <li class="item">
-              <span class="kind kind-none">?</span>
-              <div class="item-body"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a></div>
-              ${stagePill(p.stage)}
-            </li>`).join('')}
-          </ul>
-        </section>` : ''}
+          <div class="panel-head"><h2>Pipeline</h2><a class="panel-link" href="#/projects">Board →</a></div>
+          <p class="panel-sub">Projects at each stage</p>
+          ${pipelineHTML(st.byStage)}
+        </section>
+
+        <section class="panel span-2">
+          <div class="panel-head"><h2>Action items <span class="count">${actions.length}</span></h2></div>
+          ${actions.length ? `<ul class="items">${actions.map(actionItem).join('')}</ul>` : '<p class="muted">Nothing overdue or due this week.</p>'}
+          ${att.noNextAction.length ? `
+            <h3 class="subhead">Needs a next action</h3>
+            <ul class="items">${att.noNextAction.map((p) => `
+              <li class="item">
+                <span class="kind-key"><i class="key key-none"></i></span>
+                <div class="item-body"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a></div>
+                ${stagePill(p.stage)}
+              </li>`).join('')}
+            </ul>` : ''}
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>Workload</h2></div>
+          <p class="panel-sub">Open tasks by person</p>
+          ${workloadHTML(st.workload)}
+        </section>
+      </div>
+
       <section class="panel">
-        <h2>All projects</h2>
+        <div class="panel-head"><h2>Portfolio</h2><span class="muted small">${state.projects.length} project${state.projects.length === 1 ? '' : 's'}</span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Project</th><th>Stage</th><th>Next action</th><th>Due</th><th class="num">Open tasks</th></tr></thead>
+            <thead><tr><th>Project</th><th>Stage</th><th>Next action</th><th>Due</th><th class="num">Open tasks</th><th>Target journal</th></tr></thead>
             <tbody>${overview}</tbody>
           </table>
         </div>
@@ -536,6 +780,7 @@
   }
 
   function route() {
+    hideTip();
     const hash = location.hash || '#/';
     const m = hash.match(/^#\/project\/(.+)$/);
     if (m) renderProject(decodeURIComponent(m[1]));
@@ -576,8 +821,8 @@
     } else if (a === 'load-example') {
       state = normalizeState(exampleState(today()));
       commit();
-    } else if (a === 'toggle-mine') {
-      ui.mineOnly = el.checked;
+    } else if (a === 'set-mine') {
+      ui.mineOnly = el.dataset.mine === '1' && !!state.me;
       route();
     } else if (a === 'toggle-task') {
       const t = state.tasks.find((x) => x.id === el.dataset.id);
@@ -714,6 +959,12 @@
       e.target.value = '';
     });
     window.addEventListener('hashchange', route);
+    const tipTarget = (e) => e.target.closest && e.target.closest('[data-tip]');
+    document.addEventListener('pointerover', (e) => { const el = tipTarget(e); if (el) showTip(el); });
+    document.addEventListener('pointerout', (e) => { if (tipTarget(e)) hideTip(); });
+    document.addEventListener('focusin', (e) => { const el = tipTarget(e); if (el) showTip(el); else hideTip(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+    window.addEventListener('scroll', hideTip, { passive: true });
     route();
   }
 

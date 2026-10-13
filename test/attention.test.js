@@ -49,3 +49,17 @@ test('normalizeState repairs bad input', () => {
   assert.strictEqual(s.projects[0].nextActionDue, '');
   assert.strictEqual(s.tasks.length, 0);
 });
+
+test('dashboardStats counts tiles, stages and workload', () => {
+  const { dashboardStats } = require('../app.js');
+  const s = dashboardStats(setup(), TODAY);
+  assert.strictEqual(s.activeCount, 2);
+  assert.strictEqual(s.submittedCount, 1);
+  assert.strictEqual(s.overdueCount, 1);
+  assert.strictEqual(s.dueSoonCount, 2); // revision is 10 days out, so not "this week"
+  assert.deepStrictEqual(s.byStage.map((x) => x.projects.length), [1, 0, 1, 0, 0, 1]);
+  assert.deepStrictEqual(s.workload, [
+    { name: 'Ana', open: 3, overdue: 1 },
+    { name: 'Ben', open: 1, overdue: 0 },
+  ]);
+});

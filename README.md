@@ -2,7 +2,7 @@
 
 One place to see where every paper stands.
 
-- **This week** — what's overdue, what's due in the next 7 days, revision deadlines within 14 days, and projects with no next action. "Only mine" filters to your own tasks.
+- **Dashboard** — "What needs my attention this week?": summary tiles (active projects, overdue, due in 7 days, tasks completed), a 30-day deadline timeline across projects, a stage pipeline chart, open tasks by person, an action list you can tick off, and a portfolio table. "Only mine" filters to your own work.
 - **Projects** — a board by stage: idea → protocol → screening → extraction → writing → submitted.
 - **Each project** — stage, next action (who and by when), tasks with owners and due dates, team and roles, target journal, submission date, revision deadline, and notes.
 
