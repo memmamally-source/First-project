@@ -2,18 +2,73 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Research Project Tracker</title>
+  <meta name="description" content="Research Project Tracker by Dr Muhammad Emmamally, MBChB, PhD. Track every paper from idea to submission.">
   <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script>
+    // With accounts on, keep the app hidden until someone has signed in.
+    if (window.RPT_CONFIG && window.RPT_CONFIG.supabaseUrl) document.documentElement.classList.add('sb-mode');
+  </script>
 </head>
 <body>
+  <section id="auth" class="auth" hidden>
+    <div class="auth-brand">
+      <span class="brand-mark big" aria-hidden="true">
+        <svg viewBox="0 0 20 20"><path d="M4 3h9l3 3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 9h6M7 12h6M7 15h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </span>
+      <h1 class="auth-title">Research Project Tracker</h1>
+      <p class="auth-author">Dr Muhammad Emmamally <span>MBChB, PhD</span></p>
+      <ol class="auth-pipeline" aria-label="Every paper moves from idea to submission">
+        <li class="done">Idea</li>
+        <li class="done">Protocol</li>
+        <li class="done">Screening</li>
+        <li class="now">Extraction</li>
+        <li>Writing</li>
+        <li>Submitted</li>
+      </ol>
+      <ul class="auth-points">
+        <li>See what needs your attention this week, across every paper</li>
+        <li>Reviews and primary studies tracked with their own stages</li>
+        <li>Share a project with co-authors; the rest stays private</li>
+      </ul>
+    </div>
+
+    <div class="auth-panel">
+      <form id="auth-form" class="auth-form" novalidate>
+        <h2 id="auth-title">Sign in</h2>
+        <p id="auth-help" class="auth-help"></p>
+        <label class="field auth-field" id="auth-name-field">Your name
+          <input id="auth-name" autocomplete="name" placeholder="e.g. Dr Sam Lee">
+        </label>
+        <label class="field auth-field" id="auth-email-field">Email
+          <input id="auth-email" type="email" autocomplete="email">
+        </label>
+        <label class="field auth-field" id="auth-password-field">Password
+          <input id="auth-password" type="password" autocomplete="current-password">
+        </label>
+        <label class="field auth-field" id="auth-new-password-field">Password
+          <input id="auth-new-password" type="password" autocomplete="new-password" minlength="8" placeholder="At least 8 characters">
+        </label>
+        <label class="field auth-field" id="auth-confirm-field">Confirm password
+          <input id="auth-confirm" type="password" autocomplete="new-password">
+        </label>
+        <p id="auth-error" class="auth-error" role="alert" hidden></p>
+        <button class="btn primary auth-submit" id="auth-submit">Sign in</button>
+        <div id="auth-links" class="auth-links"></div>
+      </form>
+      <p class="auth-foot">Research Project Tracker · Dr Muhammad Emmamally, MBChB, PhD</p>
+    </div>
+  </section>
+
   <div class="shell">
     <aside class="sidebar">
       <a class="brand" href="#/">
         <span class="brand-mark" aria-hidden="true">
           <svg viewBox="0 0 20 20"><path d="M4 3h9l3 3v11H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 9h6M7 12h6M7 15h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
         </span>
-        <span class="brand-text">Research Tracker</span>
+        <span class="brand-text">Research Project Tracker<span class="brand-author">Dr M. Emmamally</span></span>
       </a>
       <nav class="nav">
         <a data-nav="home" href="#/">
@@ -27,6 +82,10 @@
       </nav>
       <button class="btn primary new-btn" data-action="new-project">+ New project</button>
       <div class="sidebar-foot">
+        <div class="account" id="account" hidden>
+          <span class="account-name" id="account-name"></span>
+          <button class="link-btn" data-action="sign-out">Sign out</button>
+        </div>
         <span class="muted" id="sync-status">Saved in this browser only.</span>
         <button class="link-btn" data-action="export">Export backup</button>
         <button class="link-btn" data-action="import">Import</button>
@@ -43,6 +102,7 @@
   </div>
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -77,7 +77,8 @@
   const isISODate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 
   function uid() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
   }
 
   const studyType = (id) => STUDY_TYPES.find((t) => t.id === id) || null;
@@ -181,6 +182,7 @@
           nextActionDue: date(p.nextActionDue),
           journal: { target: str(j.target), submittedOn: date(j.submittedOn), revisionDue: date(j.revisionDue) },
           notes: str(p.notes),
+          ownerId: str(p.ownerId),
           createdAt: str(p.createdAt) || new Date().toISOString(),
           updatedAt: str(p.updatedAt) || new Date().toISOString(),
         };
@@ -390,8 +392,41 @@
     };
   }
 
+  // ---------- Server rows (Supabase) ----------
+  // A project row stores the project and its tasks together in `data`.
+  const LOCAL_ONLY = ['ownerId'];
+
+  function projectBody(state, p) {
+    const body = {};
+    for (const k of Object.keys(p)) if (!LOCAL_ONLY.includes(k) && k !== 'id') body[k] = p[k];
+    body.tasks = state.tasks.filter((t) => t.projectId === p.id).map(({ projectId, ...t }) => t);
+    return body;
+  }
+
+  function stateFromRows(rows, me) {
+    const projects = [];
+    const tasks = [];
+    for (const row of rows || []) {
+      const data = row && row.data && typeof row.data === 'object' ? row.data : {};
+      const { tasks: rowTasks, ...rest } = data;
+      projects.push({ ...rest, id: row.id, ownerId: row.owner_id });
+      for (const t of Array.isArray(rowTasks) ? rowTasks : []) tasks.push({ ...t, projectId: row.id });
+    }
+    return normalizeState({ me, projects, tasks });
+  }
+
+  // Imported files get fresh ids, so they never collide with projects already in the database.
+  function remapIds(data) {
+    const src = normalizeState(data);
+    const map = new Map(src.projects.map((p) => [p.id, uid()]));
+    return {
+      projects: src.projects.map((p) => ({ ...p, id: map.get(p.id), ownerId: '' })),
+      tasks: src.tasks.map((t) => ({ ...t, id: uid(), projectId: map.get(t.projectId) })),
+    };
+  }
+
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
+    module.exports = { projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
   }
   if (typeof document === 'undefined') return;
 
@@ -408,8 +443,27 @@
     return Promise.resolve(window.claude.use(name)).catch(() => null);
   }
 
-  // Account sync: the whole tracker is one private document per person.
-  const cloud = { ref: null, pending: hasHost(), timer: null, saving: false, again: false };
+  // Supabase mode: real accounts on the hosted site, when config.js has the project's URL and key.
+  const CONFIG = window.RPT_CONFIG || {};
+  const sbConfigured = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
+  const sb = {
+    client: null,
+    user: null,
+    known: new Set(), // project ids that exist on the server
+    synced: {}, // project id -> last body sent or received (JSON)
+    settingsSynced: '',
+    shares: {}, // project id -> number of people it's shared with (owner's view)
+    timer: null,
+    saving: false,
+    again: false,
+    failed: false,
+  };
+  const isSb = () => !!sb.client;
+  const myId = () => (sb.user ? sb.user.id : '');
+  const ownsProject = (p) => !isSb() || !p.ownerId || p.ownerId === myId();
+
+  // Account sync inside claude.ai: the whole tracker is one private document per person.
+  const cloud = { ref: null, pending: hasHost() && !sbConfigured, timer: null, saving: false, again: false };
 
   function load() {
     try {
@@ -422,6 +476,7 @@
   }
 
   function saveLocal() {
+    if (sbConfigured) return; // never leave account data in a shared browser
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       storageOk = true;
@@ -433,8 +488,355 @@
 
   function save() {
     editedSinceLoad = true;
+    if (isSb()) return queueServerSave();
     saveLocal();
     queueCloudSave();
+  }
+
+  // ---------- Supabase: load, save, share ----------
+
+  async function loadFromServer() {
+    const c = sb.client;
+    const [projects, members, invites, settings] = await Promise.all([
+      c.from('projects').select('id, owner_id, data'),
+      c.from('project_members').select('project_id, user_id'),
+      c.from('project_invites').select('project_id, email'),
+      c.from('user_settings').select('data').eq('user_id', myId()).maybeSingle(),
+    ]);
+    const err = projects.error || members.error || invites.error || settings.error;
+    if (err) throw err;
+    const saved = (settings.data && settings.data.data) || {};
+    const meta = sb.user.user_metadata || {};
+    state = stateFromRows(projects.data, str(saved.me) || str(meta.full_name));
+    sb.known = new Set(state.projects.map((p) => p.id));
+    sb.synced = {};
+    for (const p of state.projects) sb.synced[p.id] = JSON.stringify(projectBody(state, p));
+    sb.settingsSynced = JSON.stringify({ me: state.me });
+    sb.shares = {};
+    for (const r of [...(members.data || []), ...(invites.data || [])]) {
+      const p = state.projects.find((x) => x.id === r.project_id);
+      if (p && ownsProject(p) && r.user_id !== myId()) sb.shares[r.project_id] = (sb.shares[r.project_id] || 0) + 1;
+    }
+  }
+
+  function hasUnsavedChanges() {
+    if (sb.timer || sb.saving) return true;
+    if (JSON.stringify({ me: state.me }) !== sb.settingsSynced) return true;
+    return state.projects.some((p) => sb.synced[p.id] !== JSON.stringify(projectBody(state, p)))
+      || [...sb.known].some((id) => !state.projects.some((p) => p.id === id));
+  }
+
+  function queueServerSave(delay) {
+    clearTimeout(sb.timer);
+    setSyncStatus('Saving…');
+    sb.timer = setTimeout(flushServer, delay == null ? 600 : delay);
+  }
+
+  // Sends only what changed since the last save; one save runs at a time.
+  async function flushServer() {
+    clearTimeout(sb.timer);
+    sb.timer = null;
+    if (!isSb() || !sb.user) return;
+    if (sb.saving) {
+      sb.again = true;
+      return;
+    }
+    sb.saving = true;
+    const c = sb.client;
+    try {
+      for (const p of state.projects.slice()) {
+        const body = projectBody(state, p);
+        const json = JSON.stringify(body);
+        if (sb.synced[p.id] === json) continue;
+        const res = sb.known.has(p.id)
+          ? await c.from('projects').update({ data: body }).eq('id', p.id)
+          : await c.from('projects').insert({ id: p.id, data: body });
+        if (res.error) throw res.error;
+        if (!p.ownerId) p.ownerId = myId();
+        sb.known.add(p.id);
+        sb.synced[p.id] = json;
+      }
+      for (const id of [...sb.known]) {
+        if (state.projects.some((p) => p.id === id)) continue;
+        const res = await c.from('projects').delete().eq('id', id);
+        if (res.error) throw res.error;
+        sb.known.delete(id);
+        delete sb.synced[id];
+      }
+      const settingsJson = JSON.stringify({ me: state.me });
+      if (settingsJson !== sb.settingsSynced) {
+        const res = await c.from('user_settings').upsert({ user_id: myId(), data: { me: state.me } });
+        if (res.error) throw res.error;
+        sb.settingsSynced = settingsJson;
+      }
+      sb.failed = false;
+      setSyncStatus('All changes saved.');
+    } catch (e) {
+      sb.failed = true;
+      setSyncStatus("Couldn't save. Check your connection; I'll keep trying.");
+      setTimeout(() => queueServerSave(0), 8000);
+    } finally {
+      sb.saving = false;
+      if (sb.again) {
+        sb.again = false;
+        flushServer();
+      }
+    }
+  }
+
+  // Pick up co-authors' edits when you come back to the tab.
+  async function refreshFromServer() {
+    if (!isSb() || !sb.user || hasUnsavedChanges()) return;
+    const active = document.activeElement;
+    if (active && app().contains(active) && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+    try {
+      await loadFromServer();
+      route();
+    } catch (e) {
+      /* keep what's on screen; the next save or focus tries again */
+    }
+  }
+
+  async function loadPeople(pid) {
+    const list = document.getElementById('people-list');
+    if (!list) return;
+    const { data, error } = await sb.client.rpc('project_people', { pid });
+    if (document.getElementById('people-list') !== list) return; // page changed meanwhile
+    list.replaceChildren();
+    if (error) {
+      list.textContent = "Couldn't load who this is shared with.";
+      return;
+    }
+    const p = findProject(pid);
+    const owner = p && ownsProject(p);
+    for (const person of data || []) {
+      const li = document.createElement('li');
+      const who = document.createElement('span');
+      who.className = 'grow';
+      const name = document.createElement('strong');
+      name.textContent = person.full_name || person.email;
+      who.appendChild(name);
+      if (person.full_name) {
+        const em = document.createElement('span');
+        em.className = 'meta';
+        em.textContent = person.email;
+        who.appendChild(em);
+      }
+      const badge = document.createElement('span');
+      badge.className = `access-badge access-${person.role}`;
+      badge.textContent = { owner: 'Owner', member: 'Can edit', invited: 'Invited · not signed up yet' }[person.role] || person.role;
+      li.append(who, badge);
+      if (owner && person.role !== 'owner') {
+        const x = document.createElement('button');
+        x.className = 'icon-btn';
+        x.textContent = '×';
+        x.title = 'Stop sharing with this person';
+        x.setAttribute('aria-label', `Stop sharing with ${person.email}`);
+        x.dataset.action = 'unshare';
+        x.dataset.user = person.user_id || '';
+        x.dataset.email = person.email;
+        li.appendChild(x);
+      }
+      list.appendChild(li);
+    }
+  }
+
+  async function shareProject(p, email) {
+    const msg = document.getElementById('share-msg');
+    const show = (text, bad) => {
+      if (!msg) return;
+      msg.textContent = text;
+      msg.className = bad ? 'share-msg is-error' : 'share-msg';
+      msg.hidden = false;
+    };
+    await flushServer(); // the project must exist on the server before it can be shared
+    const { data, error } = await sb.client.rpc('share_project', { pid: p.id, invitee: email });
+    if (error) return show(error.message || "Couldn't share. Try again.", true);
+    if (data === 'self') return show("That's your own email. Enter a co-author's email.", true);
+    sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
+    show(data === 'invited'
+      ? `${email} doesn't have an account yet. The project will appear on their dashboard as soon as they sign up with this email.`
+      : `Shared. ${email} can now see and edit this project from their dashboard.`);
+    loadPeople(p.id);
+  }
+
+  async function unshare(p, userId, email) {
+    const c = sb.client;
+    const res = userId
+      ? await c.from('project_members').delete().eq('project_id', p.id).eq('user_id', userId)
+      : await c.from('project_invites').delete().eq('project_id', p.id).eq('email', email);
+    if (res.error) return notice("Couldn't stop sharing", res.error.message || 'Try again in a moment.');
+    sb.shares[p.id] = Math.max(0, (sb.shares[p.id] || 1) - 1);
+    loadPeople(p.id);
+  }
+
+  async function leaveProject(p) {
+    const res = await sb.client.from('project_members').delete().eq('project_id', p.id).eq('user_id', myId());
+    if (res.error) return notice("Couldn't leave the project", res.error.message || 'Try again in a moment.');
+    state.projects = state.projects.filter((x) => x.id !== p.id);
+    state.tasks = state.tasks.filter((t) => t.projectId !== p.id);
+    sb.known.delete(p.id);
+    delete sb.synced[p.id];
+    location.hash = '#/projects';
+    route();
+  }
+
+  // ---------- Supabase: sign-in screen ----------
+
+  const authEl = () => document.getElementById('auth');
+  const shellEl = () => document.querySelector('.shell');
+
+  const AUTH_MODES = {
+    loading: { title: 'Opening your tracker…', fields: [], submit: '' },
+    signin: { title: 'Sign in', help: 'Welcome back. Sign in to see your projects and the ones shared with you.', fields: ['email', 'password'], submit: 'Sign in', links: ['signup', 'forgot'] },
+    signup: { title: 'Create your account', help: 'Your own dashboard, plus any projects co-authors share with this email.', fields: ['name', 'email', 'new-password', 'confirm'], submit: 'Create account', links: ['signin'] },
+    forgot: { title: 'Reset your password', help: "Enter your email and we'll send you a link to choose a new password.", fields: ['email'], submit: 'Send reset link', links: ['signin'] },
+    reset: { title: 'Choose a new password', help: 'Enter a new password for your account.', fields: ['new-password', 'confirm'], submit: 'Save password', links: [] },
+    sent: { title: 'Check your email', help: '', fields: [], submit: '', links: ['signin'] },
+    offline: { title: "Can't reach the sign-in service", help: 'Check your internet connection, then reload this page.', fields: [], submit: '', links: [] },
+  };
+  const AUTH_LINKS = { signin: 'I already have an account', signup: 'Create an account', forgot: 'Forgot password?' };
+
+  function showAuth(mode, message) {
+    const m = AUTH_MODES[mode];
+    const root = authEl();
+    shellEl().hidden = true;
+    shellEl().classList.remove('ready');
+    root.hidden = false;
+    root.dataset.mode = mode;
+    document.getElementById('auth-title').textContent = m.title;
+    const help = document.getElementById('auth-help');
+    help.textContent = message || m.help || '';
+    help.hidden = !help.textContent;
+    for (const f of ['name', 'email', 'password', 'new-password', 'confirm']) {
+      const wrap = document.getElementById(`auth-${f}-field`);
+      wrap.hidden = !m.fields.includes(f);
+      wrap.querySelector('input').required = m.fields.includes(f);
+    }
+    const submit = document.getElementById('auth-submit');
+    submit.hidden = !m.submit;
+    submit.textContent = m.submit;
+    submit.disabled = false;
+    document.getElementById('auth-links').innerHTML = (m.links || [])
+      .map((l) => `<button type="button" class="link-btn" data-auth="${l}">${esc(AUTH_LINKS[l])}</button>`).join('');
+    authError('');
+    const first = root.querySelector('.auth-field:not([hidden]) input');
+    if (first) first.focus();
+  }
+
+  function authError(text) {
+    const el = document.getElementById('auth-error');
+    el.textContent = text;
+    el.hidden = !text;
+  }
+
+  function friendlyAuthError(e) {
+    const msg = (e && e.message) || '';
+    if (/invalid login/i.test(msg)) return "That email and password don't match. Try again, or reset your password.";
+    if (/not confirmed/i.test(msg)) return 'Confirm your email first. Open the link we sent you, then sign in.';
+    if (/already registered|already exists/i.test(msg)) return 'There is already an account with this email. Sign in instead.';
+    if (/rate limit|too many/i.test(msg)) return 'Too many attempts. Wait a minute, then try again.';
+    if (/password/i.test(msg)) return msg;
+    return msg || 'Something went wrong. Check your connection and try again.';
+  }
+
+  async function onAuthSubmit(e) {
+    e.preventDefault();
+    const mode = authEl().dataset.mode;
+    const val = (id) => document.getElementById(`auth-${id}`).value;
+    const email = val('email').trim();
+    const submit = document.getElementById('auth-submit');
+    const redirectTo = location.origin + location.pathname;
+    if ((mode === 'signup' || mode === 'reset') && val('new-password').length < 8) return authError('Use at least 8 characters for your password.');
+    if ((mode === 'signup' || mode === 'reset') && val('new-password') !== val('confirm')) return authError("The two passwords don't match.");
+    submit.disabled = true;
+    authError('');
+    try {
+      const a = sb.client.auth;
+      if (mode === 'signin') {
+        const { data, error } = await a.signInWithPassword({ email, password: val('password') });
+        if (error) throw error;
+        await startSession(data.session);
+      } else if (mode === 'signup') {
+        const { data, error } = await a.signUp({
+          email,
+          password: val('new-password'),
+          options: { data: { full_name: val('name').trim() }, emailRedirectTo: redirectTo },
+        });
+        if (error) throw error;
+        if (data.session) await startSession(data.session);
+        else showAuth('sent', `We've sent a confirmation link to ${email}. Open it to finish creating your account. It brings you back here, signed in.`);
+      } else if (mode === 'forgot') {
+        const { error } = await a.resetPasswordForEmail(email, { redirectTo });
+        if (error) throw error;
+        showAuth('sent', `If there's an account for ${email}, a link to reset the password is on its way.`);
+      } else if (mode === 'reset') {
+        const { data, error } = await a.updateUser({ password: val('new-password') });
+        if (error) throw error;
+        const { data: s } = await a.getSession();
+        await startSession(s.session || (data && data.session));
+      }
+    } catch (err) {
+      authError(friendlyAuthError(err));
+      submit.disabled = false;
+    }
+  }
+
+  async function startSession(session) {
+    if (!session) return showAuth('signin');
+    sb.user = session.user;
+    authEl().hidden = true;
+    shellEl().hidden = false;
+    shellEl().classList.add('ready');
+    const who = document.getElementById('account-name');
+    if (who) who.textContent = (sb.user.user_metadata && sb.user.user_metadata.full_name) || sb.user.email;
+    document.getElementById('account').hidden = false;
+    state = normalizeState(null);
+    cloud.pending = true; // shows "Loading your projects…"
+    route();
+    try {
+      await loadFromServer();
+      setSyncStatus('All changes saved.');
+    } catch (e) {
+      setSyncStatus("Couldn't load your projects. Reload the page to try again.");
+    }
+    cloud.pending = false;
+    route();
+  }
+
+  async function signOut() {
+    if (hasUnsavedChanges()) await flushServer();
+    await sb.client.auth.signOut();
+    sb.user = null;
+    sb.known = new Set();
+    sb.synced = {};
+    state = normalizeState(null);
+    location.hash = '#/';
+    showAuth('signin');
+  }
+
+  async function startSupabase() {
+    document.getElementById('auth-form').addEventListener('submit', onAuthSubmit);
+    authEl().addEventListener('click', (e) => {
+      const b = e.target.closest('[data-auth]');
+      if (b) showAuth(b.dataset.auth);
+    });
+    if (!window.supabase || !window.supabase.createClient) return showAuth('offline');
+    sb.client = window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseKey, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    });
+    let recovering = /type=recovery/.test(location.hash + location.search);
+    sb.client.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        recovering = true;
+        showAuth('reset');
+      }
+    });
+    showAuth('loading');
+    const { data } = await sb.client.auth.getSession();
+    if (recovering) return showAuth('reset');
+    if (data && data.session) startSession(data.session);
+    else showAuth('signin');
   }
 
   function setSyncStatus(text) {
@@ -849,7 +1251,7 @@
       .sort((a, b) => STAGE_IDS.indexOf(a.stage) - STAGE_IDS.indexOf(b.stage) || a.title.localeCompare(b.title))
       .map((p) => `
         <tr>
-          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a>${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}</td>
+          <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a> ${shareChip(p)}${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}</td>
           <td>${typeBadge(p.studyType)}</td>
           <td>${stageMeter(p.stage, p.studyType)}</td>
           <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${waitingText(p) ? `<div class="meta">${esc(waitingText(p))}</div>` : ''}</td>
@@ -947,7 +1349,7 @@
             return `
               <a class="card" href="#/project/${esc(p.id)}">
                 <div class="card-title">${esc(p.title)}</div>
-                <div class="card-type">${typeBadge(p.studyType)}</div>
+                <div class="card-type">${typeBadge(p.studyType)} ${shareChip(p)}</div>
                 ${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}
                 ${p.journal.target ? `<div class="meta">→ ${esc(p.journal.target)}</div>` : ''}
                 <div class="card-next">${p.nextAction ? `<strong>Next:</strong> ${esc(p.nextAction)}${waitingText(p) ? `<div class="meta">${esc(waitingText(p))}</div>` : ''}` : '<span class="muted">No next action</span>'}</div>
@@ -998,7 +1400,9 @@
       <p><a href="#/projects">← All projects</a></p>
       <header class="page-head">
         <input class="title-input" data-field="title" value="${esc(p.title)}" aria-label="Project title">
-        <button class="btn danger" data-action="delete-project" data-id="${esc(p.id)}">Delete</button>
+        ${ownsProject(p)
+          ? `<button class="btn danger" data-action="delete-project" data-id="${esc(p.id)}">Delete</button>`
+          : '<button class="btn" data-action="leave-project">Leave project</button>'}
       </header>
       <div class="row type-row">
         <label class="field-inline">Study type
@@ -1115,8 +1519,35 @@
           </label>
         </section>
       </div>
+      ${isSb() ? sharePanelHTML(p) : ''}
       ${namesDatalist('names-project', p)}
       ${namesDatalist('names-all')}`;
+    if (isSb()) loadPeople(p.id);
+  }
+
+  function sharePanelHTML(p) {
+    const owner = ownsProject(p);
+    return `
+      <section class="panel share-panel">
+        <div class="panel-head"><h2>Sharing</h2></div>
+        <p class="panel-sub">${owner
+          ? 'People you share with see this project on their own dashboard and can edit it. Your other projects stay private.'
+          : 'This project was shared with you. Changes you make are saved for everyone on it.'}</p>
+        <ul class="people" id="people-list"><li class="muted">Loading…</li></ul>
+        ${owner ? `
+          <form class="share-form" data-form="share">
+            <input type="email" name="email" id="share-email" placeholder="Co-author's email address" required aria-label="Co-author's email address" autocomplete="off">
+            <button class="btn primary">Share</button>
+          </form>` : ''}
+        <p class="share-msg" id="share-msg" role="status" hidden></p>
+      </section>`;
+  }
+
+  function shareChip(p) {
+    if (!isSb()) return '';
+    if (!ownsProject(p)) return '<span class="share-chip">Shared with you</span>';
+    const n = sb.shares[p.id] || 0;
+    return n ? `<span class="share-chip">Shared with ${n}</span>` : '';
   }
 
   function initials(name) {
@@ -1240,7 +1671,14 @@
         location.hash = `#/project/${np.id}`;
       });
     } else if (a === 'load-example') {
-      state = normalizeState(exampleState(today()));
+      if (isSb()) {
+        const ex = remapIds(exampleState(today()));
+        state.projects.push(...normalizeState(ex).projects);
+        state.tasks.push(...normalizeState(ex).tasks);
+        state.me = state.me || 'You';
+      } else {
+        state = normalizeState(exampleState(today()));
+      }
       commit();
     } else if (a === 'set-type') {
       ui.typeFilter = el.dataset.type || 'all';
@@ -1297,6 +1735,23 @@
         save();
         location.hash = '#/projects';
       });
+    } else if (a === 'unshare' && p) {
+      const who = el.dataset.email;
+      askDialog({
+        title: 'Stop sharing?',
+        message: `${who} will no longer see “${p.title}” on their dashboard.`,
+        confirmLabel: 'Stop sharing',
+        danger: true,
+      }).then((ok) => ok && unshare(p, el.dataset.user, who));
+    } else if (a === 'leave-project' && p) {
+      askDialog({
+        title: 'Leave this project?',
+        message: `“${p.title}” will disappear from your dashboard. The owner can share it with you again.`,
+        confirmLabel: 'Leave project',
+        danger: true,
+      }).then((ok) => ok && leaveProject(p));
+    } else if (a === 'sign-out') {
+      signOut();
     } else if (a === 'export') {
       exportData();
     } else if (a === 'import') {
@@ -1369,6 +1824,10 @@
       const title = String(f.get('title') || '').trim();
       if (!title) return;
       state.tasks.push(newTask(p.id, title, String(f.get('owner') || '').trim(), String(f.get('due') || '')));
+    } else if (form.dataset.form === 'share') {
+      const email = String(f.get('email') || '').trim();
+      if (email) shareProject(p, email).then(() => { form.reset(); });
+      return;
     } else if (form.dataset.form === 'add-owner') {
       addOwner(p, f.get('name'));
       const input = document.querySelector('[data-form="add-owner"] input');
@@ -1388,7 +1847,7 @@
   }
 
   async function exportData() {
-    const data = JSON.stringify(state, null, 2);
+    const data = JSON.stringify({ ...state, projects: state.projects.map(({ ownerId, ...p }) => p) }, null, 2);
     const filename = `research-projects-${today()}.json`;
     const downloads = await capability('downloads');
     if (downloads) {
@@ -1422,6 +1881,16 @@
       }
       if (!data || !Array.isArray(data.projects)) {
         notice("Couldn't import that file", "It doesn't contain any projects. Choose a file made with Export backup.");
+        return;
+      }
+      if (isSb()) {
+        // Adds to what's already in the account; nothing is replaced.
+        const add = normalizeState(remapIds(data));
+        state.projects.push(...add.projects);
+        state.tasks.push(...add.tasks);
+        if (!state.me && data.me) state.me = String(data.me);
+        commit();
+        notice('Projects imported', `Added ${add.projects.length} project${add.projects.length === 1 ? '' : 's'} to your dashboard.`);
         return;
       }
       const apply = () => {
@@ -1460,6 +1929,21 @@
     document.addEventListener('focusin', (e) => { const el = tipTarget(e); if (el) showTip(el); else hideTip(); });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
     window.addEventListener('scroll', hideTip, { passive: true });
+    window.addEventListener('focus', refreshFromServer);
+    window.addEventListener('beforeunload', (e) => {
+      if (isSb() && hasUnsavedChanges()) {
+        flushServer();
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+    if (sbConfigured) {
+      document.getElementById('storage-warning').hidden = true;
+      startSupabase();
+      return;
+    }
+    authEl().hidden = true;
+    shellEl().hidden = false;
     route();
     if (cloud.pending) connectCloud();
   }
