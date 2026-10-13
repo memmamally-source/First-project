@@ -985,6 +985,7 @@
           <label class="field">Target journal
             <input data-field="journal.target" value="${esc(p.journal.target)}" placeholder="e.g. BMJ Open">
           </label>
+          ${p.stage === 'submitted' || p.journal.submittedOn || p.journal.revisionDue ? `
           <div class="row">
             <label class="field grow">Submitted on
               <input type="date" data-field="journal.submittedOn" value="${esc(p.journal.submittedOn)}">
@@ -992,7 +993,7 @@
             <label class="field grow">Revision deadline
               <input type="date" data-field="journal.revisionDue" value="${esc(p.journal.revisionDue)}">
             </label>
-          </div>
+          </div>` : '<p class="muted small">Submission date and revision deadline appear here once you move this paper to Submitted.</p>'}
         </section>
       </div>
 
