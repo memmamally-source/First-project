@@ -10,7 +10,7 @@ One place to see where every paper stands.
 
 Open `index.html` in a browser. You don't need to install anything. Click **Load example projects** to try it out.
 
-Data is saved in that browser only (localStorage). Use **Export backup** to save a JSON file and **Import** to restore it or move it to another computer.
+Opened as a file, data is saved in that browser only (localStorage). Published as a claude.ai artifact, it also saves to your Claude account, so your projects follow you across devices. Use **Export backup** to save a JSON file and **Import** to restore it or move it to another computer.
 
 ## Tests
 

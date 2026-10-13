@@ -254,6 +254,17 @@
 
   let state;
   let storageOk = true;
+  let editedSinceLoad = false;
+
+  // Capabilities exist only when the page runs inside a claude.ai artifact viewer.
+  const hasHost = () => !!(window.claude && typeof window.claude.use === 'function');
+  function capability(name) {
+    if (!hasHost()) return Promise.resolve(null);
+    return Promise.resolve(window.claude.use(name)).catch(() => null);
+  }
+
+  // Account sync: the whole tracker is one private document per person.
+  const cloud = { ref: null, pending: hasHost(), timer: null, saving: false, again: false };
 
   function load() {
     try {
@@ -265,14 +276,87 @@
     }
   }
 
-  function save() {
+  function saveLocal() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       storageOk = true;
     } catch (e) {
       storageOk = false;
     }
-    document.getElementById('storage-warning').hidden = storageOk;
+    document.getElementById('storage-warning').hidden = storageOk || !!cloud.ref;
+  }
+
+  function save() {
+    editedSinceLoad = true;
+    saveLocal();
+    queueCloudSave();
+  }
+
+  function setSyncStatus(text) {
+    const el = document.getElementById('sync-status');
+    if (el) el.textContent = text;
+  }
+
+  async function connectCloud() {
+    try {
+      const [db, user] = await Promise.all([capability('db'), capability('user')]);
+      const id = db && user ? await user.id() : null;
+      if (!id) return;
+      const ref = db.doc(`data/users/${id}/tracker`);
+      const snap = await ref.get();
+      cloud.ref = ref;
+      if (snap.exists && !editedSinceLoad) {
+        state = normalizeState(snap.data());
+        saveLocal();
+      } else if (state.projects.length) {
+        queueCloudSave(0);
+      }
+      setSyncStatus('Saved to your Claude account.');
+    } catch (e) {
+      cloud.ref = null;
+    } finally {
+      cloud.pending = false;
+      document.getElementById('storage-warning').hidden = storageOk || !!cloud.ref;
+      route();
+    }
+  }
+
+  function queueCloudSave(delay) {
+    if (!cloud.ref) return;
+    clearTimeout(cloud.timer);
+    cloud.timer = setTimeout(flushCloud, delay == null ? 700 : delay);
+  }
+
+  // One write at a time; edits made during a write are sent right after it.
+  async function flushCloud() {
+    clearTimeout(cloud.timer);
+    cloud.timer = null;
+    if (!cloud.ref) return;
+    if (cloud.saving) {
+      cloud.again = true;
+      return;
+    }
+    cloud.saving = true;
+    setSyncStatus('Saving…');
+    try {
+      await cloud.ref.set(JSON.parse(JSON.stringify(state)));
+      setSyncStatus('Saved to your Claude account.');
+    } catch (e) {
+      const code = e && e.code;
+      if (code === 'unavailable' || code === 'resource_exhausted') {
+        cloud.again = true;
+        setSyncStatus('Saving…');
+        await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
+      } else {
+        setSyncStatus("Couldn't save to your account. Use Export backup to keep a copy.");
+      }
+    } finally {
+      cloud.saving = false;
+      if (cloud.again) {
+        cloud.again = false;
+        flushCloud();
+      }
+    }
   }
 
   // ---------- Rendering helpers ----------
@@ -536,6 +620,10 @@
     tips = new Map();
     const t = today();
 
+    if (!state.projects.length && cloud.pending) {
+      app().innerHTML = `<section class="empty"><p>Loading your projects…</p></section>`;
+      return;
+    }
     if (!state.projects.length) {
       app().innerHTML = `
         <section class="empty">
@@ -779,6 +867,65 @@
     return name.split(/\s+/).filter((w) => /\w/.test(w)).slice(-2).map((w) => w.replace(/\W/g, '')[0] || '').join('').toUpperCase();
   }
 
+  // In-page dialog (the artifact viewer blocks alert/confirm/prompt).
+  // Resolves the typed text, true for a plain confirmation, or null when cancelled.
+  function askDialog(opts) {
+    const o = Object.assign({ message: '', input: null, confirmLabel: 'OK', cancelLabel: 'Cancel', danger: false }, opts);
+    return new Promise((resolve) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'modal-backdrop';
+      wrap.innerHTML = `
+        <form class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+          <h2 id="modal-title"></h2>
+          <p class="modal-msg"></p>
+          ${o.input ? '<input id="modal-input" name="value" autocomplete="off" required>' : ''}
+          <div class="modal-actions">
+            ${o.cancelLabel ? '<button type="button" class="btn" data-modal="cancel"></button>' : ''}
+            <button class="btn ${o.danger ? 'danger-solid' : 'primary'}" data-modal="ok"></button>
+          </div>
+        </form>`;
+      wrap.querySelector('#modal-title').textContent = o.title;
+      const msg = wrap.querySelector('.modal-msg');
+      msg.textContent = o.message;
+      msg.hidden = !o.message;
+      wrap.querySelector('[data-modal="ok"]').textContent = o.confirmLabel;
+      const cancelBtn = wrap.querySelector('[data-modal="cancel"]');
+      if (cancelBtn) cancelBtn.textContent = o.cancelLabel;
+      const input = wrap.querySelector('#modal-input');
+      if (input) {
+        input.placeholder = o.input.placeholder || '';
+        input.setAttribute('aria-label', o.input.label || o.title);
+      }
+      const prev = document.activeElement;
+      const close = (value) => {
+        wrap.remove();
+        document.removeEventListener('keydown', onKey, true);
+        if (prev && prev.focus) prev.focus();
+        resolve(value);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          close(null);
+        }
+      };
+      wrap.querySelector('form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        close(input ? input.value.trim() || null : true);
+      });
+      if (cancelBtn) cancelBtn.addEventListener('click', () => close(null));
+      wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(null); });
+      document.addEventListener('keydown', onKey, true);
+      document.body.appendChild(wrap);
+      (input || wrap.querySelector('[data-modal="ok"]')).focus();
+    });
+  }
+
+  function notice(title, message) {
+    return askDialog({ title, message, cancelLabel: null });
+  }
+
   function route() {
     hideTip();
     const hash = location.hash || '#/';
@@ -811,13 +958,18 @@
     const p = currentProject();
 
     if (a === 'new-project') {
-      const title = prompt('Project title');
-      if (!title || !title.trim()) return;
-      const np = newProject(title.trim());
-      if (state.me) np.team.push({ id: uid(), name: state.me, role: 'Lead author' });
-      state.projects.push(np);
-      save();
-      location.hash = `#/project/${np.id}`;
+      askDialog({
+        title: 'New project',
+        input: { label: 'Project title', placeholder: 'e.g. Telehealth adoption in rural primary care' },
+        confirmLabel: 'Create project',
+      }).then((title) => {
+        if (!title) return;
+        const np = newProject(title);
+        if (state.me) np.team.push({ id: uid(), name: state.me, role: 'Lead author' });
+        state.projects.push(np);
+        save();
+        location.hash = `#/project/${np.id}`;
+      });
     } else if (a === 'load-example') {
       state = normalizeState(exampleState(today()));
       commit();
@@ -853,11 +1005,19 @@
       touch(p);
       commit();
     } else if (a === 'delete-project' && p) {
-      if (!confirm(`Delete “${p.title}” and its tasks? This can't be undone.`)) return;
-      state.projects = state.projects.filter((x) => x.id !== p.id);
-      state.tasks = state.tasks.filter((t) => t.projectId !== p.id);
-      save();
-      location.hash = '#/projects';
+      const n = state.tasks.filter((t) => t.projectId === p.id).length;
+      askDialog({
+        title: 'Delete this project?',
+        message: `“${p.title}” and its ${n} task${n === 1 ? '' : 's'} will be removed. This can't be undone.`,
+        confirmLabel: 'Delete project',
+        danger: true,
+      }).then((ok) => {
+        if (!ok) return;
+        state.projects = state.projects.filter((x) => x.id !== p.id);
+        state.tasks = state.tasks.filter((t) => t.projectId !== p.id);
+        save();
+        location.hash = '#/projects';
+      });
     } else if (a === 'export') {
       exportData();
     } else if (a === 'import') {
@@ -914,12 +1074,23 @@
     if (first) first.focus();
   }
 
-  function exportData() {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+  async function exportData() {
+    const data = JSON.stringify(state, null, 2);
+    const filename = `research-projects-${today()}.json`;
+    const downloads = await capability('downloads');
+    if (downloads) {
+      try {
+        await downloads.save({ filename, data });
+      } catch (e) {
+        if (!e || e.code !== 'declined') notice("Couldn't export", 'The download was blocked here. Try again in a moment.');
+      }
+      return;
+    }
+    const blob = new Blob([data], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `research-projects-${today()}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -933,16 +1104,24 @@
       try {
         data = JSON.parse(reader.result);
       } catch (err) {
-        alert('That file is not valid JSON.');
+        notice("Couldn't import that file", 'It isn\'t a valid JSON file. Choose a file made with Export backup.');
         return;
       }
       if (!data || !Array.isArray(data.projects)) {
-        alert('That file does not look like a project tracker export.');
+        notice("Couldn't import that file", "It doesn't contain any projects. Choose a file made with Export backup.");
         return;
       }
-      if (state.projects.length && !confirm('Replace all current projects with the imported file?')) return;
-      state = normalizeState(data);
-      commit();
+      const apply = () => {
+        state = normalizeState(data);
+        commit();
+      };
+      if (!state.projects.length) return apply();
+      askDialog({
+        title: 'Replace your projects?',
+        message: `Importing replaces all ${state.projects.length} current projects with the ${data.projects.length} in this file.`,
+        confirmLabel: 'Replace projects',
+        danger: true,
+      }).then((ok) => ok && apply());
     };
     reader.readAsText(file);
   }
@@ -959,6 +1138,9 @@
       e.target.value = '';
     });
     window.addEventListener('hashchange', route);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && cloud.timer) flushCloud();
+    });
     const tipTarget = (e) => e.target.closest && e.target.closest('[data-tip]');
     document.addEventListener('pointerover', (e) => { const el = tipTarget(e); if (el) showTip(el); });
     document.addEventListener('pointerout', (e) => { if (tipTarget(e)) hideTip(); });
@@ -966,6 +1148,7 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
     window.addEventListener('scroll', hideTip, { passive: true });
     route();
+    if (cloud.pending) connectCloud();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
