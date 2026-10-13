@@ -323,6 +323,30 @@ textarea { resize: vertical; }
 .bar-label .stage-name, .stage-alt { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .bar-row { min-height: 28px; }
 
+/* Next action: who we're waiting for */
+.field-label { font-size: 0.82rem; color: var(--text-2); margin-bottom: 6px; }
+.owners { list-style: none; margin: 0 0 8px; padding: 0; }
+.owners li { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--grid); }
+.owners li:first-child { border-top: none; }
+.owner-check { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; cursor: pointer; }
+.owner-name { font-weight: 500; }
+.owners li.is-done .owner-name { color: var(--text-2); }
+.owner-state { font-size: 0.74rem; font-weight: 600; border-radius: 999px; padding: 2px 9px; }
+.state-waiting { background: var(--soon-soft); color: var(--soon-text); }
+.state-done { background: var(--surface-2); color: var(--good-text); }
+.owner-add { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip {
+  font: inherit; font-size: 0.82rem; cursor: pointer; padding: 3px 10px; border-radius: 999px;
+  border: 1px dashed var(--baseline); background: none; color: var(--text-2);
+}
+.chip:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+.add-owner { display: flex; gap: 8px; margin-bottom: 12px; }
+.add-owner input { flex: 1; min-width: 0; padding: 5px 10px; }
+.waiting-line {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; border-radius: 8px; background: var(--surface-2); font-size: 0.88rem; font-weight: 500;
+}
+
 /* Team roles */
 .team-head { margin: 14px 0 2px; }
 .team-head:first-of-type { margin-top: 0; }

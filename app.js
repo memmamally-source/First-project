@@ -144,7 +144,7 @@
       studyType: '',
       team: [],
       nextAction: '',
-      nextActionOwner: '',
+      nextActionOwners: [],
       nextActionDue: '',
       journal: { target: '', submittedOn: '', revisionDue: '' },
       notes: '',
@@ -177,7 +177,7 @@
             .filter((m) => m && str(m.name).trim())
             .map((m) => ({ id: m.id ? String(m.id) : uid(), name: str(m.name).trim(), role: roleFrom(m.role), note: roleNote(m) })),
           nextAction: str(p.nextAction),
-          nextActionOwner: str(p.nextActionOwner),
+          nextActionOwners: ownersFrom(p),
           nextActionDue: date(p.nextActionDue),
           journal: { target: str(j.target), submittedOn: date(j.submittedOn), revisionDue: date(j.revisionDue) },
           notes: str(p.notes),
@@ -200,6 +200,30 @@
     return { version: 1, me: str(src.me), projects, tasks };
   }
 
+  // Everyone who has to do the next action, each ticked off separately.
+  // Older saves had one free-text owner ("Ana & Ben"), which is split into people.
+  function ownersFrom(p) {
+    const list = Array.isArray(p.nextActionOwners) && (p.nextActionOwners.length || !str(p.nextActionOwner))
+      ? p.nextActionOwners.map((o) => (typeof o === 'string' ? { name: o } : o || {}))
+      : str(p.nextActionOwner).split(/\s*(?:,|&|\/|\band\b)\s*/i).map((name) => ({ name }));
+    const seen = new Set();
+    return list
+      .map((o) => ({ name: str(o.name).trim(), done: !!o.done }))
+      .filter((o) => o.name && !seen.has(o.name.toLowerCase()) && seen.add(o.name.toLowerCase()));
+  }
+
+  const pendingOwners = (p) => p.nextActionOwners.filter((o) => !o.done).map((o) => o.name);
+
+  function joinNames(names) {
+    return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  }
+
+  function waitingText(p) {
+    if (!p.nextActionOwners.length) return '';
+    const pending = pendingOwners(p);
+    return pending.length ? `Waiting for ${joinNames(pending)}` : 'Everyone has finished';
+  }
+
   const sameName = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
   // Every dated, open item across projects: tasks, next actions, and revision deadlines
@@ -217,8 +241,9 @@
       items.push({ kind: 'task', id: t.id, projectId: p.id, project: p.title, title: t.title, owner: t.owner, due: t.due, days: daysUntil(t.due, today) });
     }
     for (const p of state.projects) {
-      if (p.nextAction.trim() && p.nextActionDue && keep(p.nextActionOwner)) {
-        items.push({ kind: 'next', id: p.id, projectId: p.id, project: p.title, title: p.nextAction, owner: p.nextActionOwner, due: p.nextActionDue, days: daysUntil(p.nextActionDue, today) });
+      const mineWaiting = !mineOnly || pendingOwners(p).some((n) => sameName(n, state.me));
+      if (p.nextAction.trim() && p.nextActionDue && mineWaiting) {
+        items.push({ kind: 'next', id: p.id, projectId: p.id, project: p.title, title: p.nextAction, owner: waitingText(p), waiting: pendingOwners(p), due: p.nextActionDue, days: daysUntil(p.nextActionDue, today) });
       }
       if (p.stage === 'submitted' && p.journal.revisionDue && !mineOnly) {
         const where = p.journal.target ? ` for ${p.journal.target}` : '';
@@ -301,7 +326,7 @@
         { id: uid(), name: 'Lindiwe Dube', role: 'contributor', note: 'Librarian, search strategy' },
       ],
       nextAction: 'Finish full-text screening',
-      nextActionOwner: 'You',
+      nextActionOwners: [{ name: 'You', done: true }, { name: 'Sam Lee', done: false }],
       nextActionDue: addDays(today, 3),
       journal: { target: 'BMJ Open', submittedOn: '', revisionDue: '' },
       notes: 'PROSPERO registered. 412 records after deduplication.',
@@ -315,7 +340,7 @@
         { id: uid(), name: 'Dr. Patel', role: 'coauthor', note: 'Supervisor' },
       ],
       nextAction: 'Send draft to supervisor',
-      nextActionOwner: 'You',
+      nextActionOwners: [{ name: 'You', done: false }],
       nextActionDue: addDays(today, -1),
       journal: { target: 'Journal of Telemedicine and Telecare', submittedOn: '', revisionDue: '' },
     });
@@ -328,7 +353,7 @@
         { id: uid(), name: 'You', role: 'coauthor' },
       ],
       nextAction: 'Respond to reviewer 2 comments',
-      nextActionOwner: 'Maria Gomez',
+      nextActionOwners: [{ name: 'Maria Gomez', done: false }],
       nextActionDue: '',
       journal: { target: 'Sleep Medicine', submittedOn: addDays(today, -60), revisionDue: addDays(today, 10) },
     });
@@ -344,7 +369,7 @@
         { id: uid(), name: 'Sam Lee', role: 'coauthor', note: 'Statistician' },
       ],
       nextAction: 'Send survey reminder to participating units',
-      nextActionOwner: 'You',
+      nextActionOwners: [{ name: 'You', done: false }],
       nextActionDue: addDays(today, 4),
       journal: { target: 'Intensive and Critical Care Nursing', submittedOn: '', revisionDue: '' },
       notes: 'Ethics approved. Target sample 600; 342 responses so far.',
@@ -366,7 +391,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
+    module.exports = { waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask, exampleState };
   }
   if (typeof document === 'undefined') return;
 
@@ -827,7 +852,7 @@
           <td class="cell-project"><a href="#/project/${esc(p.id)}">${esc(p.title)}</a>${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}</td>
           <td>${typeBadge(p.studyType)}</td>
           <td>${stageMeter(p.stage, p.studyType)}</td>
-          <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${p.nextActionOwner ? `<div class="meta">${esc(p.nextActionOwner)}</div>` : ''}</td>
+          <td>${p.nextAction ? esc(p.nextAction) : '<span class="muted">Not set</span>'}${waitingText(p) ? `<div class="meta">${esc(waitingText(p))}</div>` : ''}</td>
           <td>${dueBadge(p.nextActionDue) || '<span class="muted">—</span>'}</td>
           <td class="num">${openTasks(p.id).length}</td>
           <td>${p.journal.target ? esc(p.journal.target) : '<span class="muted">—</span>'}</td>
@@ -925,7 +950,7 @@
                 <div class="card-type">${typeBadge(p.studyType)}</div>
                 ${firstAuthors(p) ? `<div class="meta">First author: ${esc(firstAuthors(p))}</div>` : ''}
                 ${p.journal.target ? `<div class="meta">→ ${esc(p.journal.target)}</div>` : ''}
-                <div class="card-next">${p.nextAction ? `<strong>Next:</strong> ${esc(p.nextAction)}` : '<span class="muted">No next action</span>'}</div>
+                <div class="card-next">${p.nextAction ? `<strong>Next:</strong> ${esc(p.nextAction)}${waitingText(p) ? `<div class="meta">${esc(waitingText(p))}</div>` : ''}` : '<span class="muted">No next action</span>'}</div>
                 <div class="card-foot">
                   <span class="meta">${open} open task${open === 1 ? '' : 's'}</span>
                   ${dueBadge(p.nextActionDue)}
@@ -996,15 +1021,32 @@
           <label class="field">What's the very next step?
             <input data-field="nextAction" value="${esc(p.nextAction)}" placeholder="${familyOf(p.studyType) === 'primary' ? 'e.g. Finish data cleaning' : 'e.g. Finish full-text screening'}">
           </label>
-          <div class="row">
-            <label class="field grow">Who
-              <input data-field="nextActionOwner" list="names-project" value="${esc(p.nextActionOwner)}" placeholder="Name">
-            </label>
-            <label class="field">By
-              <input type="date" data-field="nextActionDue" value="${esc(p.nextActionDue)}">
-            </label>
-          </div>
-          ${p.nextAction ? `<button class="btn small" data-action="next-done">Done — clear it</button>` : ''}
+          <div class="field-label">Who needs to do it</div>
+          ${p.nextActionOwners.length ? `<ul class="owners">${p.nextActionOwners.map((o, i) => `
+            <li class="${o.done ? 'is-done' : ''}">
+              <label class="owner-check">
+                <input type="checkbox" class="check" data-owner-done="${i}" ${o.done ? 'checked' : ''}>
+                <span class="owner-name">${esc(o.name)}</span>
+              </label>
+              <span class="owner-state ${o.done ? 'state-done' : 'state-waiting'}">${o.done ? 'Done' : 'Waiting'}</span>
+              <button class="icon-btn" data-action="remove-owner" data-index="${i}" aria-label="Remove ${esc(o.name)}" title="Remove">×</button>
+            </li>`).join('')}</ul>` : ''}
+          ${(() => {
+            const free = p.team.filter((m) => m.role !== 'contributor' && !p.nextActionOwners.some((o) => sameName(o.name, m.name)));
+            return free.length ? `<div class="owner-add">${free.map((m) => `<button class="chip" data-action="add-owner" data-name="${esc(m.name)}">+ ${esc(m.name)}</button>`).join('')}</div>` : '';
+          })()}
+          <form class="add-owner" data-form="add-owner">
+            <input name="name" list="names-all" placeholder="Add someone else" aria-label="Add a person to this action">
+            <button class="btn small">Add</button>
+          </form>
+          <label class="field">By
+            <input type="date" data-field="nextActionDue" value="${esc(p.nextActionDue)}">
+          </label>
+          ${p.nextAction ? `
+            <div class="waiting-line">
+              <span>${p.nextActionOwners.length ? esc(waitingText(p)) + (pendingOwners(p).length ? '' : '.') : 'Nobody assigned yet.'}</span>
+              <button class="btn small ${p.nextActionOwners.length && !pendingOwners(p).length ? 'primary' : ''}" data-action="next-done">Done — clear it</button>
+            </div>` : ''}
         </section>
 
         <section class="panel">
@@ -1154,6 +1196,14 @@
 
   // ---------- Actions ----------
 
+  function addOwner(p, name) {
+    name = String(name || '').trim();
+    if (!name || p.nextActionOwners.some((o) => sameName(o.name, name))) return;
+    p.nextActionOwners.push({ name, done: false });
+    touch(p);
+    commit();
+  }
+
   function currentProject() {
     const m = (location.hash || '').match(/^#\/project\/(.+)$/);
     return m ? findProject(decodeURIComponent(m[1])) : null;
@@ -1215,9 +1265,16 @@
       if (p.stage === 'submitted' && !p.journal.submittedOn) p.journal.submittedOn = today();
       touch(p);
       commit();
+    } else if (a === 'add-owner' && p) {
+      addOwner(p, el.dataset.name);
+    } else if (a === 'remove-owner' && p) {
+      p.nextActionOwners.splice(Number(el.dataset.index), 1);
+      touch(p);
+      commit();
     } else if (a === 'next-done' && p) {
       p.nextAction = '';
       p.nextActionDue = '';
+      p.nextActionOwners = [];
       touch(p);
       commit();
       const input = document.querySelector('[data-field="nextAction"]');
@@ -1250,6 +1307,15 @@
   // Field edits save in place without re-rendering, so focus isn't lost while moving between inputs.
   function onChange(e) {
     const el = e.target;
+    if (el.dataset.ownerDone !== undefined) {
+      const p = currentProject();
+      const o = p && p.nextActionOwners[Number(el.dataset.ownerDone)];
+      if (!o) return;
+      o.done = el.checked;
+      touch(p);
+      commit();
+      return;
+    }
     if (el.dataset.memberRole) {
       const p = currentProject();
       const m = p && p.team.find((x) => x.id === el.dataset.memberRole);
@@ -1303,6 +1369,11 @@
       const title = String(f.get('title') || '').trim();
       if (!title) return;
       state.tasks.push(newTask(p.id, title, String(f.get('owner') || '').trim(), String(f.get('due') || '')));
+    } else if (form.dataset.form === 'add-owner') {
+      addOwner(p, f.get('name'));
+      const input = document.querySelector('[data-form="add-owner"] input');
+      if (input) input.focus();
+      return;
     } else if (form.dataset.form === 'add-member') {
       const name = String(f.get('name') || '').trim();
       if (!name) return;
