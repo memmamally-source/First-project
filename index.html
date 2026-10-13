@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Research Project Tracker</title>
   <meta name="description" content="Research Project Tracker by Dr Muhammad Emmamally, MBChB, PhD. Track every paper from idea to submission.">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=dev">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="icons/favicon-32.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -14,7 +14,8 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="Research">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <script src="config.js"></script>
+  <meta name="app-version" content="dev">
+  <script src="config.js?v=dev"></script>
   <script>
     // With accounts on, keep the app hidden until someone has signed in.
     if (window.RPT_CONFIG && window.RPT_CONFIG.supabaseUrl) document.documentElement.classList.add('sb-mode');
@@ -103,6 +104,7 @@
         <button class="link-btn" data-action="export">Export backup</button>
         <button class="link-btn" data-action="import">Import</button>
         <input id="import-file" type="file" accept="application/json,.json" hidden>
+        <span class="app-version" id="app-version"></span>
       </div>
     </aside>
 
@@ -116,6 +118,6 @@
   <div id="tooltip" class="tooltip" role="tooltip" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-  <script src="app.js"></script>
+  <script src="app.js?v=dev"></script>
 </body>
 </html>

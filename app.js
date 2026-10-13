@@ -2568,9 +2568,33 @@
   }
 
   // Installed-app support (offline shell). Only on the hosted site, never inside Claude or a file.
+  // A new version takes over as soon as it's published: check on open and whenever the app comes back
+  // to the foreground, and reload once when the new version activates.
   if ('serviceWorker' in navigator && location.protocol === 'https:' && !hasHost()) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded) {
+        reloaded = true;
+        location.reload();
+      }
+    });
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') reg.update().catch(() => {});
+        });
+      }).catch(() => {});
+    });
   }
+
+  function showVersion() {
+    const meta = document.querySelector('meta[name="app-version"]');
+    const el = document.getElementById('app-version');
+    if (meta && el && meta.content !== 'dev') el.textContent = `Version ${meta.content}`;
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', showVersion);
+  else showVersion();
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

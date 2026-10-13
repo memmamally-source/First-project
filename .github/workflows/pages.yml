@@ -31,6 +31,13 @@ jobs:
           TZ: Europe/London
       - name: Collect site files
         run: mkdir _site && cp -r index.html app.js styles.css config.js manifest.webmanifest sw.js icons _site/
+      - name: Stamp the version so browsers and the installed app load the new files
+        run: |
+          V="${GITHUB_SHA::7}"
+          sed -i "s/?v=dev/?v=$V/g; s/name=\"app-version\" content=\"dev\"/name=\"app-version\" content=\"$V\"/" _site/index.html
+          sed -i "s/__VERSION__/$V/" _site/sw.js
+          grep -c "?v=$V" _site/index.html
+          grep "rpt-$V" _site/sw.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
