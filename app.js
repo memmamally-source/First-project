@@ -2396,6 +2396,11 @@
     if (cloud.pending) connectCloud();
   }
 
+  // Installed-app support (offline shell). Only on the hosted site, never inside Claude or a file.
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !hasHost()) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
