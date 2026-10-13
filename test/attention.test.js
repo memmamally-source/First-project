@@ -111,8 +111,15 @@ test('next action with several people shows who we are waiting for', () => {
 });
 
 test('server rows: projects and tasks round-trip; imports get fresh ids', () => {
-  const { projectBody, stateFromRows, remapIds, exampleState } = require('../app.js');
-  const ex = normalizeState(exampleState(TODAY));
+  const { projectBody, stateFromRows, remapIds } = require('../app.js');
+  const ex = normalizeState({ me: 'Ana', projects: [
+    { id: 'p1', title: 'Exercise for back pain', stage: 'screening', studyType: 'meta-analysis', team: [{ name: 'Ana', role: 'first' }], nextAction: 'Screen', nextActionOwners: [{ name: 'Ana' }] },
+    { id: 'p2', title: 'ICU burnout survey', stage: 'idea', studyType: 'cross-sectional' },
+  ], tasks: [
+    { id: 't1', projectId: 'p1', title: 'Resolve conflicts', owner: 'Ana', due: TODAY },
+    { id: 't2', projectId: 'p1', title: 'Pilot form', done: true },
+    { id: 't3', projectId: 'p2', title: 'Ethics form' },
+  ] });
   const p = ex.projects[0];
   const body = projectBody(ex, p);
   assert.ok(!('id' in body) && !('ownerId' in body));
@@ -128,4 +135,20 @@ test('server rows: projects and tasks round-trip; imports get fresh ids', () => 
   const ids = new Set(r.projects.map((x) => x.id));
   assert.ok(r.tasks.every((t) => ids.has(t.projectId)));
   assert.strictEqual(r.tasks.length, ex.tasks.length);
+});
+
+test('people index: who is on which paper, with roles, tasks and waiting', () => {
+  const { peopleIndex, matchesSearch } = require('../app.js');
+  const s = normalizeState({ projects: [
+    { id: 'a', title: 'PAD', team: [{ name: 'Ana', role: 'first' }, { name: 'ben', role: 'coauthor' }], nextAction: 'Screen', nextActionOwners: [{ name: 'Ben' }, { name: 'Cy' }] },
+    { id: 'b', title: 'ECHO', team: [{ name: 'Ben', role: 'first' }, { name: 'Dee', role: 'contributor' }] },
+  ], tasks: [{ id: 't', projectId: 'b', title: 'x', owner: 'Ana' }, { id: 'u', projectId: 'a', title: 'y', owner: 'Ana', done: true }] });
+  const idx = Object.fromEntries(peopleIndex(s).map((p) => [p.name.toLowerCase(), p]));
+  assert.deepStrictEqual(idx.ben.papers.map((p) => [p.title, p.role, p.waiting]), [['ECHO', 'first', false], ['PAD', 'coauthor', true]]);
+  assert.strictEqual(idx.ben.waitingOn, 1);
+  assert.deepStrictEqual(idx.ana.papers.map((p) => [p.title, p.role, p.openTasks]), [['PAD', 'first', 0], ['ECHO', 'assigned', 1]]);
+  assert.deepStrictEqual(idx.cy.papers.map((p) => p.role), ['assigned']);
+  assert.deepStrictEqual(idx.dee.papers.map((p) => p.role), ['contributor']);
+  assert.ok(matchesSearch(s.projects[1], 'echo dee'));
+  assert.ok(!matchesSearch(s.projects[1], 'pad'));
 });
