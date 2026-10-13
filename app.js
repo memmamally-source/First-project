@@ -490,10 +490,26 @@
     sb.synced = {};
     for (const p of state.projects) sb.synced[p.id] = JSON.stringify(projectBody(state, p));
     sb.settingsSynced = JSON.stringify({ me: state.me });
-    sb.shares = {};
-    for (const r of [...(members.data || []), ...(invites.data || [])]) {
-      const p = state.projects.find((x) => x.id === r.project_id);
-      if (p && ownsProject(p) && r.user_id !== myId()) sb.shares[r.project_id] = (sb.shares[r.project_id] || 0) + 1;
+    if (!(await loadShareCounts())) {
+      // Older database without my_share_counts(): count rows (may double-count a re-invited person).
+      sb.shares = {};
+      for (const r of [...(members.data || []), ...(invites.data || [])]) {
+        const p = state.projects.find((x) => x.id === r.project_id);
+        if (p && ownsProject(p) && r.user_id !== myId()) sb.shares[r.project_id] = (sb.shares[r.project_id] || 0) + 1;
+      }
+    }
+  }
+
+  // "Shared with N": each person counted once, members and pending invites together.
+  async function loadShareCounts() {
+    try {
+      const { data, error } = await sb.client.rpc('my_share_counts', {});
+      if (error) return false;
+      sb.shares = {};
+      for (const r of data || []) sb.shares[r.project_id] = r.people;
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -671,7 +687,18 @@
     }
     const p = findProject(pid);
     const owner = p && ownsProject(p);
-    for (const person of data || []) {
+    const seen = new Set();
+    const people = (data || [])
+      .slice()
+      .sort((a, b) => ['owner', 'member', 'invited'].indexOf(a.role) - ['owner', 'member', 'invited'].indexOf(b.role))
+      .filter((x) => {
+        const key = (x.email || x.user_id || '').toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    if (owner) sb.shares[pid] = people.filter((x) => x.role !== 'owner').length;
+    for (const person of people) {
       const li = document.createElement('li');
       const who = document.createElement('span');
       who.className = 'grow';
@@ -716,10 +743,9 @@
     if (error) return show(error.message || "Couldn't share. Try again.", true);
     if (data === 'self') return show("That's your own email. Enter a co-author's email.", true);
     if (data === 'already') return show(`${email} is already on this project.`, true);
-    sb.shares[p.id] = (sb.shares[p.id] || 0) + 1;
     loadPeople(p.id);
     if (data === 'added') return show(`Shared. ${email} can now see and edit this project from their dashboard.`);
-    show(`Sending the invite to ${email}…`);
+    show(data === 'reinvited' ? `You'd already invited ${email}. Sending it again…` : `Sending the invite to ${email}…`);
     const emailed = await emailInvite(p, email);
     showInviteResult(p, email, emailed);
   }
@@ -769,7 +795,7 @@
     msg.hidden = false;
     const text = document.createElement('p');
     text.textContent = emailed
-      ? `Invite emailed to ${email}. It's also waiting on their dashboard. Not arrived? Send it from your own email:`
+      ? `Invite emailed to ${email}. It's waiting on their dashboard too (one invite per person, however often you send it). Not arrived? Send it from your own email:`
       : `Invite created, but the automatic email couldn't be sent. Send it from your own email so ${email} gets it:`;
     const row = document.createElement('div');
     row.className = 'share-actions';
@@ -805,7 +831,6 @@
       ? await c.from('project_members').delete().eq('project_id', p.id).eq('user_id', userId)
       : await c.from('project_invites').delete().eq('project_id', p.id).eq('email', email);
     if (res.error) return notice("Couldn't stop sharing", res.error.message || 'Try again in a moment.');
-    sb.shares[p.id] = Math.max(0, (sb.shares[p.id] || 1) - 1);
     loadPeople(p.id);
   }
 
