@@ -910,7 +910,7 @@
 
   const app = () => document.getElementById('app');
   const today = () => toISO(new Date());
-  const ui = { mineOnly: false, showDone: {}, typeFilter: 'all' };
+  const ui = { mineOnly: false, showDone: {}, typeFilter: 'all', calMonth: '', calDay: '' };
 
   function esc(s) {
     return String(s == null ? '' : s)
@@ -1170,6 +1170,74 @@
     }).join('');
   }
 
+  // Month calendar (weeks start on Monday). Dots mark deadlines; selecting a day lists them.
+  function calendarHTML(items, t) {
+    const month = ui.calMonth || t.slice(0, 7);
+    const selected = ui.calDay || t;
+    const first = parseISO(`${month}-01`);
+    const offset = (first.getDay() + 6) % 7;
+    const daysInMonth = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    const cells = Math.ceil((offset + daysInMonth) / 7) * 7;
+    const start = addDays(`${month}-01`, -offset);
+    const byDate = new Map();
+    for (const i of items) {
+      if (!byDate.has(i.due)) byDate.set(i.due, []);
+      byDate.get(i.due).push(i);
+    }
+    const title = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const weekdays = [...Array(7)].map((_, k) => parseISO(addDays('2024-01-01', k)).toLocaleDateString(undefined, { weekday: 'narrow' }));
+
+    const dayCells = [...Array(cells)].map((_, k) => {
+      const d = addDays(start, k);
+      const list = byDate.get(d) || [];
+      const cls = [
+        'cal-day',
+        d.slice(0, 7) !== month ? 'is-other' : '',
+        d === t ? 'is-today' : '',
+        d === selected ? 'is-selected' : '',
+        list.some((i) => i.days < 0) ? 'has-overdue' : '',
+      ].filter(Boolean).join(' ');
+      const kinds = [...new Set(list.map((i) => i.kind))];
+      const label = `${parseISO(d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}${list.length ? `, ${list.length} due` : ''}`;
+      return `
+        <button class="${cls}" data-action="cal-day" data-date="${d}" aria-label="${esc(label)}" aria-pressed="${d === selected}">
+          <span class="cal-num">${Number(d.slice(8))}</span>
+          <span class="cal-dots">${kinds.slice(0, 3).map((k) => `<i class="key key-${k}"></i>`).join('')}</span>
+        </button>`;
+    }).join('');
+
+    const dayItems = byDate.get(selected) || [];
+    const dayTitle = selected === t ? 'Today' : parseISO(selected).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    return `
+      <div class="cal-head">
+        <button class="icon-btn cal-nav" data-action="cal-prev" aria-label="Previous month">‹</button>
+        <span class="cal-title">${esc(title)}</span>
+        <button class="icon-btn cal-nav" data-action="cal-next" aria-label="Next month">›</button>
+        ${month !== t.slice(0, 7) || selected !== t ? '<button class="link-btn cal-today" data-action="cal-today">Today</button>' : ''}
+      </div>
+      <div class="cal-grid" role="group" aria-label="${esc(title)}">
+        ${weekdays.map((w) => `<span class="cal-wd" aria-hidden="true">${esc(w)}</span>`).join('')}
+        ${dayCells}
+      </div>
+      <div class="legend cal-legend" aria-hidden="true">
+        <span><i class="key key-task"></i>Task</span>
+        <span><i class="key key-next"></i>Next action</span>
+        <span><i class="key key-revision"></i>Revision</span>
+        <span><i class="key key-ring"></i>Overdue</span>
+      </div>
+      <div class="cal-list">
+        <h3 class="subhead">${esc(dayTitle)}</h3>
+        ${dayItems.length ? `<ul class="items">${dayItems.map((i) => `
+          <li class="item ${i.days < 0 ? 'is-overdue' : ''}">
+            <span class="kind-key"><i class="key key-${i.kind}"></i></span>
+            <div class="item-body">
+              <div class="item-title">${esc(i.title)}</div>
+              <div class="meta"><span>${esc(KIND_LABEL[i.kind])}</span><span>·</span><a href="#/project/${esc(i.projectId)}">${esc(i.project)}</a>${i.owner ? `<span>· ${esc(i.owner)}</span>` : ''}</div>
+            </div>
+          </li>`).join('')}</ul>` : '<p class="muted small">Nothing due.</p>'}
+      </div>`;
+  }
+
   function workloadHTML(rows) {
     if (!rows.length) return '<p class="muted">No open tasks.</p>';
     const max = Math.max(1, ...rows.map((r) => r.open));
@@ -1312,6 +1380,10 @@
             </ul>` : ''}
         </section>
         <div class="side-col">
+          <section class="panel cal-panel">
+            <div class="panel-head"><h2>Calendar</h2></div>
+            ${calendarHTML(items, t)}
+          </section>
           <section class="panel">
             <div class="panel-head"><h2>Study types</h2>${filtered ? '<button class="link-btn panel-link" data-action="set-type" data-type="all">Show all</button>' : ''}</div>
             <p class="panel-sub">Projects by design · select one to filter</p>
@@ -1680,6 +1752,23 @@
         state = normalizeState(exampleState(today()));
       }
       commit();
+    } else if (a === 'cal-day') {
+      ui.calDay = el.dataset.date;
+      ui.calMonth = el.dataset.date.slice(0, 7);
+      route();
+      const btn = document.querySelector(`.cal-day[data-date="${el.dataset.date}"]`);
+      if (btn) btn.focus();
+    } else if (a === 'cal-prev' || a === 'cal-next') {
+      const m = parseISO(`${ui.calMonth || today().slice(0, 7)}-01`);
+      m.setMonth(m.getMonth() + (a === 'cal-next' ? 1 : -1));
+      ui.calMonth = toISO(m).slice(0, 7);
+      route();
+      const nav = document.querySelector(`[data-action="${a}"]`);
+      if (nav) nav.focus();
+    } else if (a === 'cal-today') {
+      ui.calMonth = '';
+      ui.calDay = '';
+      route();
     } else if (a === 'set-type') {
       ui.typeFilter = el.dataset.type || 'all';
       route();
