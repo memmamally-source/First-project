@@ -436,6 +436,24 @@ textarea { resize: vertical; }
 .due-date { flex: none; font-size: 0.78rem; font-weight: 600; color: var(--text-2); white-space: nowrap; }
 .due-date.is-late { color: var(--critical-text); }
 
+/* Meetings */
+.key-meeting { border-radius: 2px; background: var(--text-2); }
+.cal-dots .key-meeting { width: 6px; height: 6px; }
+.repeat-icon { color: var(--muted); font-size: 0.9em; margin-left: 2px; }
+.meeting-time { flex: none; width: 92px; font-size: 0.82rem; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; display: flex; flex-direction: column; }
+.meeting-time small { font-weight: 500; color: var(--text-2); font-size: 0.76rem; }
+.meeting-item { align-items: flex-start; }
+.meeting-actions { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 4px; font-size: 0.82rem; }
+.danger-link { color: var(--critical-text); }
+.join-link { font-weight: 600; }
+.meeting-form { width: min(520px, 100%); max-height: 90vh; overflow: auto; gap: 4px; }
+.meeting-form .row { align-items: flex-end; gap: 10px; }
+.meeting-form .field { margin-bottom: 10px; }
+.meeting-form [hidden] { display: none; }
+.meetings-grid { align-items: start; }
+.due-add { margin: 12px 0 0; }
+.series-item .meta { margin-top: 2px; }
+
 /* Dialog */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px;
@@ -711,7 +729,7 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
 
   .nav {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-    display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 0;
     padding: 4px 8px calc(4px + env(safe-area-inset-bottom, 0px));
     background: var(--surface); border-top: 1px solid var(--border);
   }
