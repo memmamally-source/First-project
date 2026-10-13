@@ -109,3 +109,23 @@ test('next action with several people shows who we are waiting for', () => {
   s.projects[0].nextActionOwners.forEach((o) => { o.done = true; });
   assert.strictEqual(waitingText(s.projects[0]), 'Everyone has finished');
 });
+
+test('server rows: projects and tasks round-trip; imports get fresh ids', () => {
+  const { projectBody, stateFromRows, remapIds, exampleState } = require('../app.js');
+  const ex = normalizeState(exampleState(TODAY));
+  const p = ex.projects[0];
+  const body = projectBody(ex, p);
+  assert.ok(!('id' in body) && !('ownerId' in body));
+  assert.strictEqual(body.tasks.length, ex.tasks.filter((t) => t.projectId === p.id).length);
+  assert.ok(body.tasks.every((t) => !('projectId' in t)));
+  const back = stateFromRows([{ id: p.id, owner_id: 'u1', data: JSON.parse(JSON.stringify(body)) }], 'Ana');
+  assert.strictEqual(back.projects[0].title, p.title);
+  assert.strictEqual(back.projects[0].ownerId, 'u1');
+  assert.deepStrictEqual(projectBody(back, back.projects[0]), body);
+  const r = remapIds(ex);
+  assert.strictEqual(r.projects.length, ex.projects.length);
+  assert.ok(r.projects.every((x) => !ex.projects.some((o) => o.id === x.id) && /^[0-9a-f-]{36}$/.test(x.id)));
+  const ids = new Set(r.projects.map((x) => x.id));
+  assert.ok(r.tasks.every((t) => ids.has(t.projectId)));
+  assert.strictEqual(r.tasks.length, ex.tasks.length);
+});
