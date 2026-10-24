@@ -1,8 +1,9 @@
 # App Store listing: Research Tracker
 
-Copy each field into App Store Connect. Screenshots are in `screenshots/`
-(`ios-1.png` … `ios-6.png`, 1320 × 2868, for the **iPhone 6.9" Display** slot);
-they use made-up sample projects.
+Copy each field into App Store Connect. Upload the screenshots in
+`screenshots-6.3in/` (1206 × 2622) to the **iPhone with Dynamic Island (medium
+display)** slot; `screenshots/` holds the 1320 × 2868 originals. They use
+made-up sample projects.
 
 | Field | Value |
 |---|---|
