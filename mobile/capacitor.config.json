@@ -1,0 +1,9 @@
+{
+  "appId": "com.emmamally.researchtracker",
+  "appName": "Research Tracker",
+  "webDir": "www",
+  "backgroundColor": "#0f2747",
+  "ios": {
+    "contentInset": "never"
+  }
+}

@@ -30,7 +30,7 @@ jobs:
         env:
           TZ: Europe/London
       - name: Collect site files
-        run: mkdir _site && cp -r index.html app.js styles.css config.js manifest.webmanifest sw.js icons _site/
+        run: mkdir _site && cp -r index.html app.js styles.css config.js manifest.webmanifest sw.js icons privacy support _site/
       - name: Stamp the version so browsers and the installed app load the new files
         run: |
           V="${GITHUB_SHA::7}"

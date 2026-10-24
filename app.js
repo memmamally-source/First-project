@@ -556,6 +556,11 @@
     return Promise.resolve(window.claude.use(name)).catch(() => null);
   }
 
+  // Running inside the iPhone app (Capacitor)? Links in emails must then point at the website.
+  const IN_APP = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  const SITE_URL = 'https://memmamally-source.github.io/First-project/';
+  const siteURL = () => (IN_APP ? SITE_URL : location.origin + location.pathname);
+
   // Supabase mode: real accounts on the hosted site, when config.js has the project's URL and key.
   const CONFIG = window.RPT_CONFIG || {};
   const sbConfigured = !!(CONFIG.supabaseUrl && CONFIG.supabaseKey);
@@ -891,7 +896,7 @@
     showInviteResult(p, email, emailed);
   }
 
-  const inviteLink = (p) => `${location.origin}${location.pathname}?invite=${encodeURIComponent(p.id)}`;
+  const inviteLink = (p) => `${siteURL()}?invite=${encodeURIComponent(p.id)}`;
 
   // Emails a sign-in link that lands on the invitation. Uses a separate client so the
   // sender's own session is never touched. Returns true when Supabase accepted the email.
@@ -1051,7 +1056,7 @@
     const val = (id) => document.getElementById(`auth-${id}`).value;
     const email = val('email').trim();
     const submit = document.getElementById('auth-submit');
-    const redirectTo = location.origin + location.pathname;
+    const redirectTo = siteURL();
     if ((mode === 'signup' || mode === 'reset') && val('new-password').length < 8) return authError('Use at least 8 characters for your password.');
     if ((mode === 'signup' || mode === 'reset') && val('new-password') !== val('confirm')) return authError("The two passwords don't match.");
     submit.disabled = true;
@@ -1127,6 +1132,54 @@
     } else {
       ui.flash = 'That invitation is no longer waiting. It may have been withdrawn, or accepted from another account.';
     }
+  }
+
+  // Permanently deletes the account and every project it owns (Apple requires this in apps with sign-up).
+  function deleteAccount() {
+    const owned = state.projects.filter(ownsProject).length;
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `
+      <form class="modal" role="dialog" aria-modal="true" aria-labelledby="del-h" novalidate>
+        <h2 id="del-h">Delete your account?</h2>
+        <p class="modal-msg">This permanently deletes your account, your ${owned} project${owned === 1 ? '' : 's'} (for everyone you shared them with), your meetings and settings. Projects others shared with you stay with them. It can't be undone, so export a backup first if you might want your projects later.</p>
+        <label class="field">Type DELETE to confirm<input id="del-confirm" autocomplete="off" autocapitalize="characters"></label>
+        <p class="auth-error" id="del-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="del-backup">Export backup</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="del-cancel">Cancel</button>
+          <button class="btn danger-solid" id="del-go">Delete account</button>
+        </div>
+      </form>`;
+    const $ = (q) => wrap.querySelector(q);
+    const close = () => wrap.remove();
+    $('#del-cancel').addEventListener('click', close);
+    $('#del-backup').addEventListener('click', exportData);
+    $('form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const err = (m) => { $('#del-error').textContent = m; $('#del-error').hidden = false; };
+      if ($('#del-confirm').value.trim().toUpperCase() !== 'DELETE') return err('Type DELETE to confirm.');
+      $('#del-go').disabled = true;
+      const { error } = await sb.client.rpc('delete_my_account', {});
+      if (error) {
+        $('#del-go').disabled = false;
+        return err(/function|schema cache/i.test(error.message || '')
+          ? 'Account deletion isn\'t switched on yet. Please contact support.'
+          : error.message || "Couldn't delete the account. Check your connection and try again.");
+      }
+      close();
+      try { await sb.client.auth.signOut(); } catch (x) { /* already gone */ }
+      sb.user = null;
+      sb.known = new Set();
+      sb.synced = {};
+      state = normalizeState(null);
+      location.hash = '#/';
+      showAuth('signin', 'Your account and its data have been deleted.');
+    });
+    document.body.appendChild(wrap);
+    $('#del-confirm').focus();
   }
 
   async function signOut() {
@@ -2920,6 +2973,8 @@
     } else if (a === 'accept-invite' || a === 'decline-invite') {
       el.disabled = true;
       respondInvite(el.dataset.pid, a === 'accept-invite');
+    } else if (a === 'delete-account') {
+      deleteAccount();
     } else if (a === 'sign-out') {
       signOut();
     } else if (a === 'export') {
@@ -3047,6 +3102,19 @@
         if (!e || e.code !== 'declined') notice("Couldn't save the file", 'The download was blocked here. Try again in a moment.');
       }
       return;
+    }
+    if (IN_APP) {
+      // Apps can't download files like a browser: hand the file to the iPhone share sheet
+      // (Save to Files, Calendar, Mail…).
+      try {
+        const file = new File([data], filename, { type });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: filename });
+          return;
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // closed the share sheet
+      }
     }
     const blob = new Blob([data], { type });
     const url = URL.createObjectURL(blob);

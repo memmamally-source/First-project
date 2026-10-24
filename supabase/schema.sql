@@ -369,3 +369,21 @@ revoke execute on function public.share_project(uuid, text) from anon;
 revoke execute on function public.my_share_counts() from anon;
 grant execute on function public.share_project(uuid, text) to authenticated;
 grant execute on function public.my_share_counts() to authenticated;
+
+-- Account deletion (also shipped as 005_delete_account.sql for existing projects).
+create or replace function public.delete_my_account()
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  me uuid := auth.uid();
+  e text;
+begin
+  if me is null then
+    raise exception 'Sign in first';
+  end if;
+  select email into e from profiles where id = me;
+  delete from project_invites where email = lower(coalesce(e, ''));
+  delete from auth.users where id = me;
+end $$;
+
+revoke execute on function public.delete_my_account() from public, anon;
+grant execute on function public.delete_my_account() to authenticated;

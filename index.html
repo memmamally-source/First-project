@@ -67,7 +67,7 @@
         <button class="btn primary auth-submit" id="auth-submit">Sign in</button>
         <div id="auth-links" class="auth-links"></div>
       </form>
-      <p class="auth-foot">Research Project Tracker · Dr Muhammad Emmamally, MBChB, PhD</p>
+      <p class="auth-foot">Research Project Tracker · Dr Muhammad Emmamally, MBChB, PhD<br><a href="privacy/" target="_blank" rel="noopener">Privacy</a> · <a href="support/" target="_blank" rel="noopener">Help</a></p>
     </div>
   </section>
 
@@ -103,11 +103,13 @@
         <div class="account" id="account" hidden>
           <span class="account-name" id="account-name"></span>
           <button class="link-btn" data-action="sign-out">Sign out</button>
+          <button class="link-btn danger-link" data-action="delete-account">Delete account</button>
         </div>
         <span class="muted" id="sync-status">Saved in this browser only.</span>
         <button class="link-btn" data-action="export">Export backup</button>
         <button class="link-btn" data-action="import">Import</button>
         <input id="import-file" type="file" accept="application/json,.json" hidden>
+        <span class="foot-links"><a href="privacy/" target="_blank" rel="noopener">Privacy</a> · <a href="support/" target="_blank" rel="noopener">Help</a></span>
         <span class="app-version" id="app-version"></span>
       </div>
     </aside>
