@@ -492,6 +492,20 @@ form.add-task {
 .gantt-today { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--critical); opacity: 0.6; }
 .modal-actions .grow { flex: 1; }
 
+/* Assigning tasks */
+form.add-task .owner-pick { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.owner-select { width: 100%; padding: 7px 8px; }
+.owner-other { width: 100%; }
+.owner-chip { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-weight: 500; }
+.mini-avatar {
+  width: 18px; height: 18px; border-radius: 50%; display: inline-grid; place-items: center;
+  font-size: 0.6rem; font-weight: 700; background: var(--accent-soft); color: var(--accent);
+}
+.task-for { white-space: nowrap; }
+.small-seg button { padding: 3px 10px; font-size: 0.78rem; }
+.panel-head h2 { margin-bottom: 0; }
+.grid-2 .panel .panel-head { margin-bottom: 12px; }
+
 /* Dialog */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px;
