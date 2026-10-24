@@ -2289,7 +2289,9 @@
         <input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Done">
         <div class="item-body">
           <div class="item-title">${esc(t.title)}</div>
-          ${t.owner || t.start ? `<div class="meta">${[t.owner && esc(t.owner), t.start && `${esc(fmtShort(t.start))} → ${esc(t.due ? fmtShort(t.due) : 'no due date')}`].filter(Boolean).join(' · ')}</div>` : ''}
+          <div class="meta">${t.owner
+            ? `<span class="owner-chip"><span class="mini-avatar" aria-hidden="true">${esc(initials(t.owner))}</span>${esc(t.owner)}</span>`
+            : '<span class="muted">Unassigned</span>'}${t.start ? `<span>· ${esc(fmtShort(t.start))} → ${esc(t.due ? fmtShort(t.due) : 'no due date')}</span>` : ''}</div>
         </div>
         ${t.done ? '' : dueBadge(t.due)}
         <button class="icon-btn" data-action="edit-task" data-id="${esc(t.id)}" aria-label="Edit task" title="Edit dates, owner or name">✎</button>
@@ -2355,39 +2357,34 @@
         </section>
 
         <section class="panel">
-          <h2>Journal</h2>
-          <label class="field">Target journal
-            <input data-field="journal.target" value="${esc(p.journal.target)}" placeholder="e.g. BMJ Open">
-          </label>
-          ${p.stage === 'submitted' || p.journal.submittedOn || p.journal.revisionDue ? `
-          <div class="row">
-            <label class="field grow">Submitted on
-              <input type="date" data-field="journal.submittedOn" value="${esc(p.journal.submittedOn)}">
-            </label>
-            <label class="field grow">Revision deadline
-              <input type="date" data-field="journal.revisionDue" value="${esc(p.journal.revisionDue)}">
-            </label>
-          </div>` : '<p class="muted small">Submission date and revision deadline appear here once you move this paper to Submitted.</p>'}
-        </section>
-      </div>
-
-      <div class="grid-2">
-        <section class="panel">
-          <h2>Tasks <span class="count">${open.length} open</span></h2>
+          <div class="panel-head">
+            <h2>Tasks <span class="count">${open.length} open</span></h2>
+            ${open.length ? `<div class="segmented small-seg" role="group" aria-label="Show tasks">
+              <button data-action="task-group" data-group="list" aria-pressed="${ui.taskGroup !== 'person'}">List</button>
+              <button data-action="task-group" data-group="person" aria-pressed="${ui.taskGroup === 'person'}">By person</button>
+            </div>` : ''}
+          </div>
           <form class="add-task" data-form="add-task">
             <input name="title" placeholder="New task" required aria-label="Task">
-            <input name="owner" list="names-project" placeholder="Who" aria-label="Owner">
+            <span class="owner-pick">${ownerPicker(p, ui.taskOwner && ui.taskOwner.pid === p.id ? ui.taskOwner.name : '', 'owner')}</span>
             <label class="mini-field">Start <span class="muted">(optional)</span><input name="start" type="date"></label>
             <label class="mini-field">Due<input name="due" type="date"></label>
             <button class="btn primary">Add</button>
           </form>
           ${taskGanttHTML(open)}
-          ${open.length ? `<ul class="items">${open.map(taskRow).join('')}</ul>` : '<p class="muted">No open tasks.</p>'}
+          ${!open.length ? '<p class="muted">No open tasks.</p>'
+            : ui.taskGroup === 'person'
+              ? tasksByPerson(open).map(([who, list]) => `
+                  <h3 class="subhead">${esc(who || 'Unassigned')} <span class="count">${list.length}</span></h3>
+                  <ul class="items">${list.map(taskRow).join('')}</ul>`).join('')
+              : `<ul class="items">${open.map(taskRow).join('')}</ul>`}
           ${done.length ? `
             <button class="link-btn" data-action="toggle-show-done">${ui.showDone[p.id] ? 'Hide' : 'Show'} ${done.length} completed</button>
             ${ui.showDone[p.id] ? `<ul class="items">${done.map(taskRow).join('')}</ul>` : ''}` : ''}
         </section>
+      </div>
 
+      <div class="grid-2">
         <section class="panel">
           <h2>Team</h2>
           ${p.team.length ? ROLES.map((r) => {
@@ -2402,6 +2399,7 @@
                   <span class="avatar avatar-${m.role}" aria-hidden="true">${esc(initials(m.name))}</span>
                   <span class="grow"><strong>${esc(m.name)}</strong>${m.note ? ` <span class="muted">· ${esc(m.note)}</span>` : ''}
                     <span class="meta">${n} open task${n === 1 ? '' : 's'}</span></span>
+                  <button class="btn small task-for" data-action="task-for" data-name="${esc(m.name)}" title="Add a task for ${esc(m.name)}">+ Task</button>
                   <select class="role-select" data-member-role="${esc(m.id)}" aria-label="Role for ${esc(m.name)}">
                     ${ROLES.map((x) => `<option value="${x.id}"${x.id === m.role ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}
                   </select>
@@ -2420,6 +2418,21 @@
           <label class="field">Notes
             <textarea data-field="notes" rows="4" placeholder="Registration number, search dates, decisions…">${esc(p.notes)}</textarea>
           </label>
+        </section>
+        <section class="panel">
+          <h2>Journal</h2>
+          <label class="field">Target journal
+            <input data-field="journal.target" value="${esc(p.journal.target)}" placeholder="e.g. BMJ Open">
+          </label>
+          ${p.stage === 'submitted' || p.journal.submittedOn || p.journal.revisionDue ? `
+          <div class="row">
+            <label class="field grow">Submitted on
+              <input type="date" data-field="journal.submittedOn" value="${esc(p.journal.submittedOn)}">
+            </label>
+            <label class="field grow">Revision deadline
+              <input type="date" data-field="journal.revisionDue" value="${esc(p.journal.revisionDue)}">
+            </label>
+          </div>` : '<p class="muted small">Submission date and revision deadline appear here once you move this paper to Submitted.</p>'}
         </section>
       </div>
       ${isSb() ? sharePanelHTML(p) : ''}
@@ -2476,6 +2489,32 @@
     commit();
   }
 
+  // "Who" picker: the project's team first, then anyone else already given work, then "Someone else…".
+  function ownerPicker(p, selected, name, id) {
+    const team = ROLE_ORDER.slice(0, 3).flatMap((r) => p.team.filter((m) => m.role === r)).map((m) => m.name);
+    const others = [...new Set(state.tasks.filter((t) => t.projectId === p.id && t.owner && !team.some((n) => sameName(n, t.owner))).map((t) => t.owner))];
+    if (selected && !team.some((n) => sameName(n, selected)) && !others.some((n) => sameName(n, selected))) others.push(selected);
+    const opt = (n) => `<option value="${esc(n)}"${sameName(n, selected) ? ' selected' : ''}>${esc(n)}</option>`;
+    return `
+      <select name="${name}" ${id ? `id="${id}"` : ''} class="owner-select" data-owner-select aria-label="Who is this task for">
+        <option value="">${selected ? 'Unassigned' : 'Who? (unassigned)'}</option>
+        ${team.length ? `<optgroup label="Project team">${team.map(opt).join('')}</optgroup>` : ''}
+        ${others.length ? `<optgroup label="Others">${others.map(opt).join('')}</optgroup>` : ''}
+        <option value="__other">Someone else…</option>
+      </select>
+      <input name="${name}_other" ${id ? `id="${id}-other"` : ''} class="owner-other" placeholder="Their name" aria-label="Their name" hidden>`;
+  }
+
+  function tasksByPerson(tasks) {
+    const groups = new Map();
+    for (const t of tasks) {
+      const key = t.owner.trim().toLowerCase();
+      if (!groups.has(key)) groups.set(key, [t.owner.trim(), []]);
+      groups.get(key)[1].push(t);
+    }
+    return [...groups.values()].sort((a, b) => (!a[0]) - (!b[0]) || a[0].localeCompare(b[0]));
+  }
+
   // Gantt-style view of a project's open tasks: a bar from start to due, or a dot when there's only a due date.
   function taskGanttHTML(tasks) {
     const dated = tasks.filter((t) => t.due).sort((a, b) => (a.start || a.due).localeCompare(b.start || b.due) || a.due.localeCompare(b.due));
@@ -2524,7 +2563,7 @@
       <form class="modal meeting-form" role="dialog" aria-modal="true" aria-labelledby="task-edit-h" novalidate>
         <h2 id="task-edit-h">Edit task</h2>
         <label class="field">Task<input id="te-title" value="${esc(task.title)}" required></label>
-        <label class="field">Who<input id="te-owner" list="names-project" value="${esc(task.owner)}" placeholder="Name"></label>
+        <label class="field">Who${p ? ownerPicker(p, task.owner, 'te_owner', 'te-owner') : `<input id="te-owner" value="${esc(task.owner)}">`}</label>
         <div class="row">
           <label class="field grow">Start (optional)<input id="te-start" type="date" value="${esc(task.start)}"></label>
           <label class="field grow">Due<input id="te-due" type="date" value="${esc(task.due)}"></label>
@@ -2558,7 +2597,9 @@
       if (!title) return err('Give the task a name.');
       if (start && !due) return err('Add a due date as well, so the task has an end.');
       if (start && due && start > due) return err('The start date must be on or before the due date.');
-      Object.assign(task, { title, owner: $('#te-owner').value.trim(), start, due });
+      const pick = $('#te-owner');
+      const owner = pick.value === '__other' ? $('#te-owner-other').value.trim() : pick.value.trim();
+      Object.assign(task, { title, owner, start, due });
       if (p) touch(p);
       close();
       commit();
@@ -2781,6 +2822,18 @@
       t.done = !t.done;
       t.doneAt = t.done ? new Date().toISOString() : '';
       commit();
+    } else if (a === 'task-group') {
+      ui.taskGroup = el.dataset.group;
+      route();
+    } else if (a === 'task-for' && p) {
+      ui.taskOwner = { pid: p.id, name: el.dataset.name };
+      route();
+      const title = document.querySelector('.add-task input[name="title"]');
+      if (title) {
+        title.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        title.focus();
+        title.placeholder = `New task for ${el.dataset.name}`;
+      }
     } else if (a === 'edit-task') {
       const task = state.tasks.find((x) => x.id === el.dataset.id);
       if (task) editTask(task);
@@ -2879,6 +2932,14 @@
   // Field edits save in place without re-rendering, so focus isn't lost while moving between inputs.
   function onChange(e) {
     const el = e.target;
+    if (el.matches && el.matches('[data-owner-select]')) {
+      const other = el.parentElement.querySelector('.owner-other');
+      if (other) {
+        other.hidden = el.value !== '__other';
+        if (!other.hidden) other.focus();
+      }
+      return;
+    }
     if (el.dataset.select) {
       ui.selected = ui.selected || new Set();
       if (el.checked) ui.selected.add(el.dataset.select);
@@ -2947,7 +3008,9 @@
     if (form.dataset.form === 'add-task') {
       const title = String(f.get('title') || '').trim();
       if (!title) return;
-      state.tasks.push(newTask(p.id, title, String(f.get('owner') || '').trim(), String(f.get('due') || ''), String(f.get('start') || '')));
+      const owner = f.get('owner') === '__other' ? String(f.get('owner_other') || '').trim() : String(f.get('owner') || '').trim();
+      state.tasks.push(newTask(p.id, title, owner, String(f.get('due') || ''), String(f.get('start') || '')));
+      ui.taskOwner = owner ? { pid: p.id, name: owner } : null; // keep adding for the same person
     } else if (form.dataset.form === 'share') {
       const email = String(f.get('email') || '').trim();
       if (email) shareProject(p, email).then(() => { form.reset(); });
