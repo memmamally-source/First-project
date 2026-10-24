@@ -18,6 +18,7 @@ they use made-up sample projects.
 | **Marketing URL** | https://memmamally-source.github.io/First-project/ |
 | **Privacy Policy URL** | https://memmamally-source.github.io/First-project/privacy/ |
 | **Copyright** | 2026 Muhammad Emmamally |
+| **Contact email** (App Review → Contact) | researchprojecttracker@gmail.com |
 
 ## Promotional text (170 characters max, optional)
 
