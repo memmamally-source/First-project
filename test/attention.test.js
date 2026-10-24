@@ -193,3 +193,23 @@ test('meetings: repeats, end dates, cancelled dates and calendar files', () => {
   assert.match(meetingICS(nth, 'x'), /DTSTART;VALUE=DATE:20261013/);
   assert.deepStrictEqual(normalizeMeetings([{ title: '', date: '2026-01-01' }, { title: 'x', date: 'bad' }]), []);
 });
+
+test('task timelines: start dates, in-progress days and calendar file', () => {
+  const { tasksInProgress, taskICS, newTask } = require('../app.js');
+  const s = normalizeState({ projects: [{ id: 'p', title: 'PAD' }], tasks: [
+    { id: 'a', projectId: 'p', title: 'Screening', owner: 'Ana', start: '2026-10-20', due: '2026-10-24' },
+    { id: 'b', projectId: 'p', title: 'Swapped', start: '2026-11-05', due: '2026-11-01' },
+    { id: 'c', projectId: 'p', title: 'Due only', due: '2026-10-22' },
+    { id: 'd', projectId: 'p', title: 'Done', start: '2026-10-20', due: '2026-10-30', done: true },
+  ] });
+  assert.deepStrictEqual([s.tasks[1].start, s.tasks[1].due], ['2026-11-01', '2026-11-05']);
+  assert.deepStrictEqual(tasksInProgress(s, '2026-10-20').map((t) => t.id), ['a']);
+  assert.deepStrictEqual(tasksInProgress(s, '2026-10-24').map((t) => t.id), [], 'due day is shown as due, not in progress');
+  assert.deepStrictEqual(tasksInProgress(s, '2026-10-19').map((t) => t.id), []);
+  const ics = taskICS(s.tasks[0], 'PAD', 'X');
+  assert.match(ics, /DTSTART;VALUE=DATE:20261020\r\nDTEND;VALUE=DATE:20261025/);
+  assert.match(ics, /SUMMARY:Screening/);
+  assert.match(taskICS(s.tasks[2], 'PAD', 'X'), /SUMMARY:Due: Due only/);
+  const t = newTask('p', 'x', '', '2026-01-01', '2026-02-01');
+  assert.deepStrictEqual([t.start, t.due], ['2026-01-01', '2026-02-01']);
+});
