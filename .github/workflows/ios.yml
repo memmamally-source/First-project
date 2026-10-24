@@ -68,6 +68,10 @@ jobs:
           KEY: ${{ secrets.APPSTORE_KEY }}
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
+          # Pasted secrets often carry a stray newline or space.
+          KEY_ID=$(printf '%s' "$KEY_ID" | tr -d '[:space:]')
+          ISSUER_ID=$(printf '%s' "$ISSUER_ID" | tr -d '[:space:]')
+          TEAM_ID=$(printf '%s' "$TEAM_ID" | tr -d '[:space:]')
           if [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ] || [ -z "$KEY" ] || [ -z "$TEAM_ID" ]; then
             echo "::error::Add the four App Store Connect secrets first (see mobile/README.md)."
             exit 1
