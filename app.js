@@ -154,8 +154,10 @@
     };
   }
 
-  function newTask(projectId, title, owner, due) {
-    return { id: uid(), projectId, title, owner: owner || '', due: due || '', done: false, doneAt: '' };
+  function newTask(projectId, title, owner, due, start) {
+    const t = { id: uid(), projectId, title, owner: owner || '', start: start || '', due: due || '', done: false, doneAt: '' };
+    if (t.start && t.due && t.start > t.due) [t.start, t.due] = [t.due, t.start];
+    return t;
   }
 
   const str = (v) => (typeof v === 'string' ? v : '');
@@ -195,7 +197,9 @@
         projectId: String(t.projectId),
         title: str(t.title).trim(),
         owner: str(t.owner),
-        due: date(t.due),
+        // A task can run from a start date to its due date; dates entered the wrong way round are swapped.
+        start: date(t.start) && date(t.due) && t.start > t.due ? t.due : date(t.start),
+        due: date(t.start) && date(t.due) && t.start > t.due ? t.start : date(t.due),
         done: !!t.done,
         doneAt: str(t.doneAt),
       }));
@@ -240,7 +244,7 @@
       if (t.done || !t.due || !keep(t.owner)) continue;
       const p = byId.get(t.projectId);
       if (!p) continue;
-      items.push({ kind: 'task', id: t.id, projectId: p.id, project: p.title, title: t.title, owner: t.owner, due: t.due, days: daysUntil(t.due, today) });
+      items.push({ kind: 'task', id: t.id, projectId: p.id, project: p.title, title: t.title, owner: t.owner, start: t.start, due: t.due, days: daysUntil(t.due, today) });
     }
     for (const p of state.projects) {
       const mineWaiting = !mineOnly || pendingOwners(p).some((n) => sameName(n, state.me));
@@ -428,6 +432,27 @@
     return lines.join('\r\n') + '\r\n';
   }
 
+  // ---------- Task timelines ----------
+
+  // Open tasks being worked on that day: started on or before it and due after it.
+  function tasksInProgress(state, iso) {
+    return state.tasks.filter((t) => !t.done && t.start && t.due && t.start <= iso && iso < t.due);
+  }
+
+  // Calendar file for a task: an all-day entry from its start date (or due date) to its due date.
+  function taskICS(task, projectTitle, nowUTC) {
+    const icsText = (v) => String(v).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+    const day = (iso) => iso.replace(/-/g, '');
+    const first = task.start || task.due;
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Research Project Tracker//EN', 'BEGIN:VEVENT',
+      `UID:${task.id}@research-project-tracker`, `DTSTAMP:${nowUTC}`,
+      `DTSTART;VALUE=DATE:${day(first)}`, `DTEND;VALUE=DATE:${day(addDays(task.due || first, 1))}`,
+      `SUMMARY:${icsText(task.start ? task.title : `Due: ${task.title}`)}`,
+      `DESCRIPTION:${icsText([projectTitle, task.owner && `Who: ${task.owner}`].filter(Boolean).join('\n'))}`,
+      'END:VEVENT', 'END:VCALENDAR'];
+    return lines.join('\r\n') + '\r\n';
+  }
+
   // ---------- Search and people ----------
 
   function matchesSearch(p, q) {
@@ -514,7 +539,7 @@
   }
 
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { normalizeMeetings, occursOn, meetingsBetween, describeMeeting, meetingICS, matchesSearch, peopleIndex, projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask };
+    module.exports = { tasksInProgress, taskICS, normalizeMeetings, occursOn, meetingsBetween, describeMeeting, meetingICS, matchesSearch, peopleIndex, projectBody, stateFromRows, remapIds, waitingText, STAGES, STUDY_TYPES, ROLES, stageLabel, stageLabelFor, filterByType, typeCounts, attention, deadlines, dashboardStats, normalizeState, addDays, daysUntil, newProject, newTask };
   }
   if (typeof document === 'undefined') return;
 
@@ -1245,6 +1270,8 @@
     return parseISO(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
+  const fmtShort = (iso) => (iso ? parseISO(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '');
+
   function relDays(days) {
     if (days === 0) return 'today';
     if (days === 1) return 'tomorrow';
@@ -1400,7 +1427,8 @@
 
     const lanes = new Map();
     for (const i of inRange) {
-      if (!lanes.has(i.projectId)) lanes.set(i.projectId, { project: i.project, id: i.projectId, groups: new Map() });
+      if (!lanes.has(i.projectId)) lanes.set(i.projectId, { project: i.project, id: i.projectId, groups: new Map(), items: [] });
+      lanes.get(i.projectId).items.push(i);
       const key = i.days < 0 ? 'overdue' : String(i.days);
       const g = lanes.get(i.projectId).groups;
       if (!g.has(key)) g.set(key, []);
@@ -1422,16 +1450,23 @@
         const label = `${lane.project}: ${list.map((i) => i.title).join('; ')}, ${when}`;
         return `<button class="dot dot-${first.kind}${key === 'overdue' ? ' is-overdue' : ''}" style="left:${x(first.days)}%" ${tip} aria-label="${esc(label)}">${list.length > 1 ? `<span class="dot-count">${list.length}</span>` : ''}</button>`;
       }).join('');
+      const bars = lane.items
+        .filter((i) => i.kind === 'task' && i.start && i.days >= 0 && daysUntil(i.start, t) < i.days)
+        .map((i) => {
+          const from = x(Math.max(0, daysUntil(i.start, t)));
+          return `<span class="tl-bar" style="left:${from}%;width:${Math.max(0.5, x(i.days) - from)}%" title="${esc(`${i.title}: ${fmtShort(i.start)} → ${fmtShort(i.due)}`)}"></span>`;
+        }).join('');
       return `
         <div class="lane">
           <a class="lane-label" href="#/project/${esc(lane.id)}" title="${esc(lane.project)}">${esc(lane.project)}</a>
-          <div class="lane-track">${dots}</div>
+          <div class="lane-track">${bars}${dots}</div>
         </div>`;
     }).join('');
 
     return `
       <div class="legend" aria-hidden="true">
         <span><i class="key key-task"></i>Task</span>
+        <span><i class="key key-span"></i>Task timeline (start → due)</span>
         <span><i class="key key-next"></i>Next action</span>
         <span><i class="key key-revision"></i>Revision deadline</span>
         <span><i class="key key-band"></i>Overdue</span>
@@ -1508,6 +1543,15 @@
       if (!byDate.has(i.due)) byDate.set(i.due, []);
       byDate.get(i.due).push(i);
     }
+    // Days a task is being worked on (start → due) get a bar along the bottom of the cell.
+    const spans = new Map();
+    const lastCell = addDays(start, cells - 1);
+    for (const i of items) {
+      if (i.kind !== 'task' || !i.start) continue;
+      for (let d = i.start < start ? start : i.start; d <= i.due && d <= lastCell; d = addDays(d, 1)) {
+        spans.set(d, (spans.get(d) || 0) + 1);
+      }
+    }
     const title = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     const weekdays = [...Array(7)].map((_, k) => parseISO(addDays('2024-01-01', k)).toLocaleDateString(undefined, { weekday: 'narrow' }));
 
@@ -1523,11 +1567,15 @@
       ].filter(Boolean).join(' ');
       const kinds = [...new Set(list.map((i) => i.kind))];
       const meets = meetingDates.get(d) || 0;
-      const label = `${parseISO(d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}${list.length ? `, ${list.length} due` : ''}${meets ? `, ${meets} meeting${meets === 1 ? '' : 's'}` : ''}`;
+      const busy = spans.get(d) || 0;
+      const prevBusy = spans.get(addDays(d, -1)) && d !== start && parseISO(d).getDay() !== 1;
+      const nextBusy = spans.get(addDays(d, 1)) && parseISO(d).getDay() !== 0;
+      const label = `${parseISO(d).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}${list.length ? `, ${list.length} due` : ''}${busy ? `, ${busy} task${busy === 1 ? '' : 's'} in progress` : ''}${meets ? `, ${meets} meeting${meets === 1 ? '' : 's'}` : ''}`;
       return `
         <button class="${cls}" data-action="cal-day" data-date="${d}" aria-label="${esc(label)}" aria-pressed="${d === selected}">
           <span class="cal-num">${Number(d.slice(8))}</span>
           <span class="cal-dots">${kinds.slice(0, 3).map((k) => `<i class="key key-${k}"></i>`).join('')}${meets ? '<i class="key key-meeting"></i>' : ''}</span>
+          ${busy ? `<span class="cal-span${prevBusy ? ' joins-left' : ''}${nextBusy ? ' joins-right' : ''}" aria-hidden="true"></span>` : ''}
         </button>`;
     }).join('');
 
@@ -1550,6 +1598,7 @@
         <span><i class="key key-next"></i>Next action</span>
         <span><i class="key key-revision"></i>Revision</span>
         <span><i class="key key-meeting"></i>Meeting</span>
+        <span><i class="key key-span"></i>Task in progress</span>
         <span><i class="key key-ring"></i>Overdue</span>
       </div>
       <div class="cal-list">
@@ -1836,6 +1885,10 @@
     }
     const multiDay = d.kind !== 'day';
     const meets = d.kind === 'day' ? meetingsBetween(state.meetings, d.date, d.date) : [];
+    const working = d.kind === 'day'
+      ? tasksInProgress(d.filtered ? filterByType(state, ui.typeFilter) : state, d.date)
+        .filter((x) => !(d.filtered && ui.mineOnly && state.me) || sameName(x.owner, state.me))
+      : [];
     const row = (i) => {
       const task = i.kind === 'task' ? state.tasks.find((x) => x.id === i.id) : null;
       const done = !!(task && task.done);
@@ -1874,6 +1927,18 @@
           <button class="icon-btn" data-action="close-due" aria-label="Close">×</button>
         </div>
         ${meets.length ? `<h3 class="subhead">Meetings</h3><ul class="items due-list">${meets.map((x) => meetingRow(x.meeting, x.date, { actions: true })).join('')}</ul>` : ''}
+        ${working.length ? `<h3 class="subhead">In progress</h3><ul class="items due-list">${working.map((x) => {
+          const p = findProject(x.projectId);
+          return `
+            <li class="item">
+              <input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(x.id)}" aria-label="Mark “${esc(x.title)}” done">
+              <div class="item-body">
+                <div class="item-title">${esc(x.title)}</div>
+                <div class="meta"><span>Task</span><span>·</span><a href="#/project/${esc(x.projectId)}" data-close-due>${esc(p ? p.title : '')}</a>${x.owner ? `<span>· ${esc(x.owner)}</span>` : ''}</div>
+              </div>
+              <span class="due-date">until ${esc(fmtShort(x.due))}</span>
+            </li>`;
+        }).join('')}</ul>` : ''}
         ${d.kind === 'day' ? `<h3 class="subhead">Due</h3>` : ''}
         ${d.items.length
           ? `<ul class="items due-list">${d.items.map(row).join('')}</ul>`
@@ -2224,9 +2289,10 @@
         <input type="checkbox" class="check" data-action="toggle-task" data-id="${esc(t.id)}" ${t.done ? 'checked' : ''} aria-label="Done">
         <div class="item-body">
           <div class="item-title">${esc(t.title)}</div>
-          ${t.owner ? `<div class="meta">${esc(t.owner)}</div>` : ''}
+          ${t.owner || t.start ? `<div class="meta">${[t.owner && esc(t.owner), t.start && `${esc(fmtShort(t.start))} → ${esc(t.due ? fmtShort(t.due) : 'no due date')}`].filter(Boolean).join(' · ')}</div>` : ''}
         </div>
         ${t.done ? '' : dueBadge(t.due)}
+        <button class="icon-btn" data-action="edit-task" data-id="${esc(t.id)}" aria-label="Edit task" title="Edit dates, owner or name">✎</button>
         <button class="icon-btn" data-action="delete-task" data-id="${esc(t.id)}" aria-label="Delete task" title="Delete task">×</button>
       </li>`;
 
@@ -2311,9 +2377,11 @@
           <form class="add-task" data-form="add-task">
             <input name="title" placeholder="New task" required aria-label="Task">
             <input name="owner" list="names-project" placeholder="Who" aria-label="Owner">
-            <input name="due" type="date" aria-label="Due date">
+            <label class="mini-field">Start <span class="muted">(optional)</span><input name="start" type="date"></label>
+            <label class="mini-field">Due<input name="due" type="date"></label>
             <button class="btn primary">Add</button>
           </form>
+          ${taskGanttHTML(open)}
           ${open.length ? `<ul class="items">${open.map(taskRow).join('')}</ul>` : '<p class="muted">No open tasks.</p>'}
           ${done.length ? `
             <button class="link-btn" data-action="toggle-show-done">${ui.showDone[p.id] ? 'Hide' : 'Show'} ${done.length} completed</button>
@@ -2406,6 +2474,98 @@
     ui.selected = new Set();
     ui.flash = `Removed ${n} project${n === 1 ? '' : 's'} from your dashboard.`;
     commit();
+  }
+
+  // Gantt-style view of a project's open tasks: a bar from start to due, or a dot when there's only a due date.
+  function taskGanttHTML(tasks) {
+    const dated = tasks.filter((t) => t.due).sort((a, b) => (a.start || a.due).localeCompare(b.start || b.due) || a.due.localeCompare(b.due));
+    if (!dated.length) return '';
+    const t = today();
+    let from = dated.reduce((m, x) => ((x.start || x.due) < m ? x.start || x.due : m), t);
+    let to = dated.reduce((m, x) => (x.due > m ? x.due : m), addDays(t, 14));
+    from = addDays(from, -1);
+    to = addDays(to, 1);
+    const span = Math.max(1, daysUntil(to, from));
+    const pct = (iso) => Math.min(100, Math.max(0, (daysUntil(iso, from) / span) * 100));
+    const step = span > 120 ? 28 : span > 49 ? 14 : 7;
+    const ticks = [];
+    for (let d = from; d <= to; d = addDays(d, step)) ticks.push(d);
+    return `
+      <div class="gantt" aria-label="Task timeline">
+        <div class="gantt-row gantt-axis">
+          <span class="gantt-label"></span>
+          <div class="gantt-track">
+            ${ticks.map((d) => `<span class="tick" style="left:${pct(d)}%">${esc(fmtShort(d))}</span>`).join('')}
+            ${t >= from && t <= to ? `<span class="gantt-today" style="left:${pct(t)}%"></span>` : ''}
+          </div>
+        </div>
+        ${dated.map((x) => {
+          const late = x.due < t;
+          const label = `${x.title}${x.owner ? ` (${x.owner})` : ''}: ${x.start ? `${fmtShort(x.start)} → ` : 'due '}${fmtShort(x.due)}`;
+          return `
+            <div class="gantt-row">
+              <span class="gantt-label" title="${esc(x.title)}">${esc(x.title)}</span>
+              <div class="gantt-track">
+                ${t >= from && t <= to ? `<span class="gantt-today" style="left:${pct(t)}%"></span>` : ''}
+                ${x.start
+                  ? `<span class="gantt-bar${late ? ' is-late' : ''}" role="img" aria-label="${esc(label)}" title="${esc(label)}" style="left:${pct(x.start)}%;width:${Math.max(1.5, pct(addDays(x.due, 1)) - pct(x.start))}%"></span>`
+                  : `<span class="gantt-dot${late ? ' is-late' : ''}" role="img" aria-label="${esc(label)}" title="${esc(label)}" style="left:${pct(x.due)}%"></span>`}
+              </div>
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  function editTask(task) {
+    const p = findProject(task.projectId);
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-backdrop';
+    wrap.innerHTML = `
+      <form class="modal meeting-form" role="dialog" aria-modal="true" aria-labelledby="task-edit-h" novalidate>
+        <h2 id="task-edit-h">Edit task</h2>
+        <label class="field">Task<input id="te-title" value="${esc(task.title)}" required></label>
+        <label class="field">Who<input id="te-owner" list="names-project" value="${esc(task.owner)}" placeholder="Name"></label>
+        <div class="row">
+          <label class="field grow">Start (optional)<input id="te-start" type="date" value="${esc(task.start)}"></label>
+          <label class="field grow">Due<input id="te-due" type="date" value="${esc(task.due)}"></label>
+        </div>
+        <p class="muted small">With a start and due date, the task shows as a bar on the calendar and timelines.</p>
+        <p class="auth-error" id="te-error" hidden></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" id="te-ics" ${task.due || task.start ? '' : 'disabled title="Add a date first"'}>Add to my calendar</button>
+          <span class="grow"></span>
+          <button type="button" class="btn" id="te-cancel">Cancel</button>
+          <button class="btn primary">Save</button>
+        </div>
+      </form>`;
+    const $ = (id) => wrap.querySelector(id);
+    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    $('#te-cancel').addEventListener('click', close);
+    wrap.addEventListener('mousedown', (e) => { if (e.target === wrap) close(); });
+    $('#te-ics').addEventListener('click', () => {
+      const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+      const name = task.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 40) || 'task';
+      saveFile(`${name}.ics`, taskICS({ ...task, start: $('#te-start').value, due: $('#te-due').value || $('#te-start').value }, p ? p.title : '', now), 'text/calendar');
+    });
+    $('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const title = $('#te-title').value.trim();
+      const start = $('#te-start').value;
+      const due = $('#te-due').value;
+      const err = (m) => { $('#te-error').textContent = m; $('#te-error').hidden = false; };
+      if (!title) return err('Give the task a name.');
+      if (start && !due) return err('Add a due date as well, so the task has an end.');
+      if (start && due && start > due) return err('The start date must be on or before the due date.');
+      Object.assign(task, { title, owner: $('#te-owner').value.trim(), start, due });
+      if (p) touch(p);
+      close();
+      commit();
+    });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(wrap);
+    $('#te-title').focus();
   }
 
   function sharePanelHTML(p) {
@@ -2621,6 +2781,9 @@
       t.done = !t.done;
       t.doneAt = t.done ? new Date().toISOString() : '';
       commit();
+    } else if (a === 'edit-task') {
+      const task = state.tasks.find((x) => x.id === el.dataset.id);
+      if (task) editTask(task);
     } else if (a === 'delete-task') {
       state.tasks = state.tasks.filter((x) => x.id !== el.dataset.id);
       commit();
@@ -2784,7 +2947,7 @@
     if (form.dataset.form === 'add-task') {
       const title = String(f.get('title') || '').trim();
       if (!title) return;
-      state.tasks.push(newTask(p.id, title, String(f.get('owner') || '').trim(), String(f.get('due') || '')));
+      state.tasks.push(newTask(p.id, title, String(f.get('owner') || '').trim(), String(f.get('due') || ''), String(f.get('start') || '')));
     } else if (form.dataset.form === 'share') {
       const email = String(f.get('email') || '').trim();
       if (email) shareProject(p, email).then(() => { form.reset(); });
