@@ -732,6 +732,7 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
 .nav-badge[hidden] { display: none; }
 .flash { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; background: var(--accent-soft); color: var(--text); font-weight: 500; }
 
+.foot-links { font-size: 0.78rem; }
 .app-version { font-size: 0.72rem; color: var(--muted); }
 
 /* Sharing */
@@ -799,4 +800,22 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
   .project-list th:nth-child(n+3), .project-list td:nth-child(n+3) { display: none; }
   .project-list:has(.cell-check) th:nth-child(3), .project-list:has(.cell-check) td:nth-child(3) { display: table-cell; }
   .sb-mode .shell:not(.ready) ~ * .nav { display: none; }
+}
+
+/* Privacy and help pages */
+.doc-page { background: var(--page); }
+.doc { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; line-height: 1.6; }
+.doc h1 { font-size: 1.8rem; margin-bottom: 4px; }
+.doc h2 { font-size: 1.1rem; margin: 28px 0 8px; display: block; }
+.doc ul { padding-left: 20px; }
+.doc li { margin-bottom: 6px; }
+
+/* Inside the iPhone app the page runs edge to edge: keep content clear of the status bar. */
+@media (max-width: 760px) {
+  .sidebar { padding-top: calc(10px + env(safe-area-inset-top, 0px)); }
+  .auth-brand { padding-top: calc(28px + env(safe-area-inset-top, 0px)); }
+}
+
+@media (max-width: 760px) {
+  .title-input { font-size: 1.1rem; padding-left: 0; text-overflow: ellipsis; }
 }

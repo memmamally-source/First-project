@@ -1,0 +1,19 @@
+{
+  "name": "research-project-tracker-app",
+  "private": true,
+  "description": "Research Project Tracker for iPhone (Capacitor): the website's files packaged as an app. See README.md in this folder.",
+  "scripts": {
+    "web": "node copy-web.js",
+    "sync": "node copy-web.js && cap sync",
+    "assets": "capacitor-assets generate --ios --iconBackgroundColor '#0f2747' --iconBackgroundColorDark '#0f2747' --splashBackgroundColor '#0f2747' --splashBackgroundColorDark '#0f2747'"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.3",
+    "@capacitor/ios": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.3",
+    "@supabase/supabase-js": "2.45.4"
+  }
+}
