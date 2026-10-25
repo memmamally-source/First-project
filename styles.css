@@ -824,3 +824,11 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
 .brand-mark { overflow: hidden; background: none; }
 .brand-mark img { width: 100%; height: 100%; display: block; }
 .brand-mark.big { background: none; width: 64px; height: 64px; border-radius: 15px; box-shadow: 0 0 0 1.5px rgba(242, 246, 252, 0.35), 0 8px 22px rgba(0, 0, 0, 0.3); }
+
+/* Phones: 16px text in fields stops iOS zooming in when you tap one. */
+@media (max-width: 760px) {
+  input:not(.title-input), textarea, select { font-size: 16px !important; }
+  .typing .nav, .typing .new-btn { display: none; }
+}
+/* iPhone app: no rubber-band bounce that drags the page away from the tab bar. */
+html.in-app, html.in-app body { overscroll-behavior: none; }
