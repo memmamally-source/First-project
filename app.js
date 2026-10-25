@@ -2756,6 +2756,8 @@
   function route() {
     hideTip();
     const hash = location.hash || '#/';
+    const moved = hash !== ui.hash;
+    ui.hash = hash;
     const page = hash.replace(/^(#\/[a-z]*).*$/, '$1');
     if (ui.page && ui.page !== page) ui.search = '';
     ui.page = page;
@@ -2766,6 +2768,8 @@
     else if (hash === '#/people') renderPeople();
     else if (hash === '#/meetings') renderMeetings();
     else renderHome();
+    // A new page starts at the top, not wherever the last one was scrolled to.
+    if (moved) window.scrollTo(0, 0);
   }
 
   // ---------- Actions ----------
@@ -3195,6 +3199,27 @@
       e.target.value = '';
     });
     window.addEventListener('hashchange', route);
+    // Phones: while the keyboard is up, hide the bottom tab bar and the floating button
+    // so they don't ride up over the field being typed in.
+    const typingField = (el) => el && el.matches &&
+      el.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, select');
+    document.addEventListener('focusin', (e) => {
+      if (typingField(e.target)) document.documentElement.classList.add('typing');
+    });
+    document.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (typingField(document.activeElement)) return;
+        document.documentElement.classList.remove('typing');
+        // The iPhone app can leave the page pushed up after the keyboard closes.
+        if (IN_APP) window.scrollTo(window.scrollX, window.scrollY);
+      }, 50);
+    });
+    if (IN_APP) {
+      document.documentElement.classList.add('in-app');
+      // Stop the app zooming in on a field when typing; the app has no pinch zoom to lose.
+      const vp = document.querySelector('meta[name="viewport"]');
+      if (vp) vp.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover';
+    }
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden' && cloud.timer) flushCloud();
     });
