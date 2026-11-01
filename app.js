@@ -230,7 +230,11 @@
     return pending.length ? `Waiting for ${joinNames(pending)}` : 'Everyone has finished';
   }
 
-  const sameName = (a, b) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+  // "Dr Muhammad Emmamally" and "muhammad  emmamally" are the same person: ignore titles,
+  // case and extra spaces when matching names.
+  const TITLES = /^(?:(?:dr|prof|professor|assoc prof|a\/prof|mr|mrs|ms|miss|mx)\.?\s+)+/;
+  const nameKey = (s) => str(s).trim().replace(/\s+/g, ' ').toLowerCase().replace(TITLES, '');
+  const sameName = (a, b) => !!nameKey(a) && nameKey(a) === nameKey(b);
 
   // Every dated, open item across projects: tasks, next actions, and revision deadlines
   // of submitted papers. `days` is relative to today (negative = overdue).
@@ -469,7 +473,7 @@
   function peopleIndex(state) {
     const people = new Map();
     const person = (name) => {
-      const key = str(name).trim().toLowerCase();
+      const key = nameKey(name);
       if (!key) return null;
       if (!people.has(key)) people.set(key, { name: str(name).trim(), papers: new Map(), openTasks: 0, waitingOn: 0 });
       return people.get(key);

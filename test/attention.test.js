@@ -153,6 +153,20 @@ test('people index: who is on which paper, with roles, tasks and waiting', () =>
   assert.ok(!matchesSearch(s.projects[1], 'pad'));
 });
 
+test('people index: titles and spacing do not split one person in two', () => {
+  const { peopleIndex } = require('../app.js');
+  const s = normalizeState({ projects: [
+    { id: 'a', title: 'Anaes', team: [{ name: 'Dr Muhammad Emmamally', role: 'coauthor' }] },
+    { id: 'b', title: 'PAD', team: [{ name: 'Muhammad  Emmamally', role: 'first' }, { name: 'Prof. Ana Lee', role: 'coauthor' }] },
+    { id: 'c', title: 'ECHO', team: [{ name: 'ana lee', role: 'first' }, { name: 'Drew Smith', role: 'coauthor' }] },
+  ] });
+  const people = peopleIndex(s);
+  assert.deepStrictEqual(people.map((p) => p.papers.length).sort(), [1, 2, 2]);
+  const me = people.find((p) => /emmamally/i.test(p.name));
+  assert.deepStrictEqual(me.papers.map((p) => p.title).sort(), ['Anaes', 'PAD']);
+  assert.ok(people.some((p) => p.name === 'Drew Smith'));
+});
+
 test('every button in the app has a click handler', () => {
   const fs = require('fs');
   const src = fs.readFileSync(require.resolve('../app.js'), 'utf8') + fs.readFileSync(require.resolve('../index.html'), 'utf8');
