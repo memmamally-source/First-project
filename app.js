@@ -7,6 +7,7 @@
   const STAGES = [
     { id: 'idea', label: 'Idea' },
     { id: 'protocol', label: 'Protocol' },
+    { id: 'search', label: 'Searches' },
     { id: 'screening', label: 'Screening' },
     { id: 'extraction', label: 'Extraction' },
     { id: 'writing', label: 'Writing' },
@@ -56,7 +57,7 @@
   }
   const FAMILY_LABEL = { review: 'Reviews', primary: 'Primary studies' };
   // Primary studies move through the same six steps, named for their own workflow.
-  const PRIMARY_STAGE_LABELS = { protocol: 'Protocol & ethics', screening: 'Data collection', extraction: 'Analysis' };
+  const PRIMARY_STAGE_LABELS = { protocol: 'Protocol & ethics', search: 'Data collection', screening: 'Data cleaning', extraction: 'Analysis' };
   const STORAGE_KEY = 'research-tracker:v1';
   const WEEK_DAYS = 7;
   const REVISION_WINDOW_DAYS = 14;
@@ -142,6 +143,7 @@
       id: uid(),
       title: title || 'Untitled project',
       stage: 'idea',
+      stages2: true,
       studyType: '',
       team: [],
       nextAction: '',
@@ -163,6 +165,20 @@
   const str = (v) => (typeof v === 'string' ? v : '');
   const date = (v) => (isISODate(v) ? v : '');
 
+  // Whole numbers typed into a box ("1,240" → "1240"); anything else is left blank.
+  const count = (v) => {
+    const n = String(v == null ? '' : v).replace(/[\s,]/g, '');
+    return /^\d+$/.test(n) ? String(Number(n)) : '';
+  };
+
+  // Before the Searches stage existed, a primary study's "Data collection" was stored as 'screening';
+  // those saves have no stages2 flag, so move them to the stage now called Data collection.
+  function stageFrom(p) {
+    const stage = STAGE_IDS.includes(p.stage) ? p.stage : 'idea';
+    if (!p.stages2 && stage === 'screening' && (studyType(p.studyType) || {}).family === 'primary') return 'search';
+    return stage;
+  }
+
   // Fills defaults and drops malformed rows, so older saves and imported files are safe to render.
   function normalizeState(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
@@ -170,11 +186,13 @@
       .filter((p) => p && typeof p === 'object' && p.id)
       .map((p) => {
         const j = p.journal && typeof p.journal === 'object' ? p.journal : {};
+        const sr = p.search && typeof p.search === 'object' ? p.search : {};
+        const dc = p.collection && typeof p.collection === 'object' ? p.collection : {};
         return {
           ...newProject(),
           id: String(p.id),
           title: str(p.title) || 'Untitled project',
-          stage: STAGE_IDS.includes(p.stage) ? p.stage : 'idea',
+          stage: stageFrom(p),
           studyType: TYPE_IDS.includes(p.studyType) ? p.studyType : '',
           team: (Array.isArray(p.team) ? p.team : [])
             .filter((m) => m && str(m.name).trim())
@@ -183,7 +201,10 @@
           nextActionOwners: ownersFrom(p),
           nextActionDue: date(p.nextActionDue),
           journal: { target: str(j.target), submittedOn: date(j.submittedOn), revisionDue: date(j.revisionDue) },
+          search: { databases: str(sr.databases), date: date(sr.date), found: count(sr.found), unique: count(sr.unique), included: count(sr.included) },
+          collection: { ethics: str(dc.ethics), ethicsDate: date(dc.ethicsDate), sites: str(dc.sites), target: count(dc.target), collected: count(dc.collected) },
           notes: str(p.notes),
+          stages2: true,
           ownerId: str(p.ownerId),
           createdAt: str(p.createdAt) || new Date().toISOString(),
           updatedAt: str(p.updatedAt) || new Date().toISOString(),
@@ -2328,6 +2349,58 @@
             : `<p class="muted no-results">Nobody matches “${esc(ui.search)}”. <button class="link-btn" data-action="clear-search">Clear search</button></p>`}`;
   }
 
+  function collectProgressHTML(c) {
+    if (!c.target) return '';
+    const pct = Math.min(100, Math.round((Number(c.collected || 0) / Number(c.target)) * 100));
+    return `<span class="collect-bar"><i style="width:${pct}%"></i></span>
+      <span class="meta">${esc(c.collected || '0')} of ${esc(c.target)} collected · ${pct}%</span>`;
+  }
+
+  // After the protocol: reviews log their database searches, primary studies their ethics and data collection.
+  function searchPanelHTML(p) {
+    const num = (field, value, label, hint) => `
+      <label class="field">${label}
+        <input data-field="${field}" data-count inputmode="numeric" value="${esc(value)}" placeholder="${hint}">
+      </label>`;
+    if (familyOf(p.studyType) === 'primary') {
+      const c = p.collection;
+      return `
+        <section class="panel search-panel">
+          <h2>Ethics &amp; data collection</h2>
+          <div class="search-grid">
+            <label class="field">Ethics reference
+              <input data-field="collection.ethics" value="${esc(c.ethics)}" placeholder="e.g. M240512">
+            </label>
+            <label class="field">Approved on
+              <input type="date" data-field="collection.ethicsDate" value="${esc(c.ethicsDate)}">
+            </label>
+            <label class="field">Sites
+              <input data-field="collection.sites" value="${esc(c.sites)}" placeholder="e.g. CMJAH, Helen Joseph">
+            </label>
+            ${num('collection.target', c.target, 'Target sample size', 'e.g. 300')}
+            ${num('collection.collected', c.collected, 'Collected so far', 'e.g. 120')}
+          </div>
+          <div class="collect-progress" role="img">${collectProgressHTML(c)}</div>
+        </section>`;
+    }
+    const s = p.search;
+    return `
+      <section class="panel search-panel">
+        <h2>Searches</h2>
+        <div class="search-grid">
+          <label class="field search-dbs">Databases searched
+            <input data-field="search.databases" value="${esc(s.databases)}" placeholder="e.g. PubMed, Embase, Scopus, CINAHL">
+          </label>
+          <label class="field">Date searched
+            <input type="date" data-field="search.date" value="${esc(s.date)}">
+          </label>
+          ${num('search.found', s.found, 'Records found', 'e.g. 1240')}
+          ${num('search.unique', s.unique, 'After duplicates removed', 'e.g. 980')}
+          ${num('search.included', s.included, 'Included studies', 'e.g. 24')}
+        </div>
+      </section>`;
+  }
+
   function renderProject(id) {
     setNav('projects');
     const p = findProject(id);
@@ -2378,6 +2451,7 @@
           </li>`).join('')}
       </ol>
       ${next ? `<p><button class="btn" data-action="set-stage" data-stage="${next.id}">Move to ${esc(stageLabel(next.id, p.studyType))} →</button></p>` : ''}
+      ${idx >= STAGE_IDS.indexOf('protocol') ? searchPanelHTML(p) : ''}
 
       <div class="grid-2">
         <section class="panel">
@@ -3052,8 +3126,16 @@
     if (field === 'title') {
       p.title = value || 'Untitled project';
       el.value = p.title;
-    } else if (field.startsWith('journal.')) {
-      p.journal[field.slice(8)] = value;
+    } else if (/^(journal|search|collection)\./.test(field)) {
+      const [group, key] = field.split('.');
+      const numeric = el.dataset.count !== undefined;
+      p[group][key] = numeric ? count(value) : value;
+      if (numeric) el.value = p[group][key];
+      const bar = group === 'collection' && document.querySelector('.collect-progress');
+      if (bar) {
+        bar.innerHTML = collectProgressHTML(p.collection);
+        bar.setAttribute('aria-label', p.collection.target ? `${p.collection.collected || 0} of ${p.collection.target} collected` : '');
+      }
     } else {
       p[field] = value;
     }
