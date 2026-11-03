@@ -537,7 +537,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .cell-project { font-weight: 500; min-width: 220px; }
 
 /* ---------- Board ---------- */
-.board { display: grid; grid-template-columns: repeat(6, minmax(150px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.board { display: grid; grid-template-columns: repeat(7, minmax(150px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
 .column { background: var(--surface-2); border-radius: var(--radius); padding: 10px; min-height: 140px; }
 .column h2 { margin-bottom: 10px; padding: 2px 4px; align-items: flex-start; justify-content: space-between; min-height: 2.6em; }
 .card {
@@ -832,3 +832,14 @@ h1 .count { font-size: 0.8rem; vertical-align: middle; }
 }
 /* iPhone app: no rubber-band bounce that drags the page away from the tab bar. */
 html.in-app, html.in-app body { overscroll-behavior: none; }
+
+/* Searches (reviews) / ethics and data collection (primary studies) */
+.search-panel { margin-bottom: 16px; }
+.search-panel h2 { margin-bottom: 12px; }
+.collect-progress:empty { display: none; }
+.search-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0 14px; }
+.search-grid .search-dbs { grid-column: span 2; }
+.collect-progress { display: flex; align-items: center; gap: 12px; }
+.collect-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.collect-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+@media (max-width: 760px) { .search-grid .search-dbs { grid-column: auto; } }

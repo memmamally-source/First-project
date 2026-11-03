@@ -57,7 +57,7 @@ test('dashboardStats counts tiles, stages and workload', () => {
   assert.strictEqual(s.submittedCount, 1);
   assert.strictEqual(s.overdueCount, 1);
   assert.strictEqual(s.dueSoonCount, 2); // revision is 10 days out, so not "this week"
-  assert.deepStrictEqual(s.byStage.map((x) => x.projects.length), [1, 0, 1, 0, 0, 1]);
+  assert.deepStrictEqual(s.byStage.map((x) => x.projects.length), [1, 0, 0, 1, 0, 0, 1]);
   assert.deepStrictEqual(s.workload, [
     { name: 'Ana', open: 3, overdue: 1 },
     { name: 'Ben', open: 1, overdue: 0 },
@@ -68,6 +68,9 @@ test('study types: stage names, filtering and counts', () => {
   const { stageLabel, stageLabelFor, filterByType, typeCounts } = require('../app.js');
   assert.strictEqual(stageLabel('screening', 'meta-analysis'), 'Screening');
   assert.strictEqual(stageLabel('screening', 'cross-sectional'), 'Data collection');
+  assert.strictEqual(stageLabel('search', 'meta-analysis'), 'Searches');
+  assert.strictEqual(stageLabel('search', 'cohort'), 'Ethics approval');
+  assert.strictEqual(stageLabel('protocol', 'cohort'), 'Protocol');
   assert.strictEqual(stageLabel('extraction', 'cohort'), 'Analysis');
   assert.strictEqual(stageLabel('writing', 'cohort'), 'Writing');
   const s = normalizeState({ projects: [
@@ -165,6 +168,18 @@ test('people index: titles and spacing do not split one person in two', () => {
   const me = people.find((p) => /emmamally/i.test(p.name));
   assert.deepStrictEqual(me.papers.map((p) => p.title).sort(), ['Anaes', 'PAD']);
   assert.ok(people.some((p) => p.name === 'Drew Smith'));
+});
+
+test('search and data collection details survive saving and loading', () => {
+  const s = normalizeState({ projects: [
+    { id: 'a', title: 'MA', stage: 'search', studyType: 'meta-analysis', search: { databases: 'PubMed, Embase', date: '2026-11-02', found: '1,240', unique: 980, included: 'lots' } },
+    { id: 'b', title: 'Cohort', studyType: 'cohort', collection: { ethics: 'M240512', target: '300', collected: ' 120 ' } },
+    { id: 'c', title: 'Old save' },
+  ] });
+  assert.strictEqual(s.projects[0].stage, 'search');
+  assert.deepStrictEqual(s.projects[0].search, { databases: 'PubMed, Embase', date: '2026-11-02', found: '1240', unique: '980', included: '' });
+  assert.deepStrictEqual(s.projects[1].collection, { ethics: 'M240512', ethicsDate: '', sites: '', target: '300', collected: '120' });
+  assert.deepStrictEqual(s.projects[2].search, { databases: '', date: '', found: '', unique: '', included: '' });
 });
 
 test('every button in the app has a click handler', () => {
