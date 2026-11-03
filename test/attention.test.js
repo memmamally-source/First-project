@@ -67,10 +67,9 @@ test('dashboardStats counts tiles, stages and workload', () => {
 test('study types: stage names, filtering and counts', () => {
   const { stageLabel, stageLabelFor, filterByType, typeCounts } = require('../app.js');
   assert.strictEqual(stageLabel('screening', 'meta-analysis'), 'Screening');
-  assert.strictEqual(stageLabel('screening', 'cross-sectional'), 'Data collection');
+  assert.strictEqual(stageLabel('screening', 'cross-sectional'), 'Data cleaning');
   assert.strictEqual(stageLabel('search', 'meta-analysis'), 'Searches');
-  assert.strictEqual(stageLabel('search', 'cohort'), 'Ethics approval');
-  assert.strictEqual(stageLabel('protocol', 'cohort'), 'Protocol');
+  assert.strictEqual(stageLabel('search', 'cohort'), 'Data collection');
   assert.strictEqual(stageLabel('extraction', 'cohort'), 'Analysis');
   assert.strictEqual(stageLabel('writing', 'cohort'), 'Writing');
   const s = normalizeState({ projects: [
@@ -78,8 +77,9 @@ test('study types: stage names, filtering and counts', () => {
     { id: 'c', studyType: 'bogus' },
   ], tasks: [{ id: 't', projectId: 'b', title: 'x' }] });
   assert.strictEqual(s.projects[2].studyType, '');
-  assert.strictEqual(stageLabelFor('screening', s.projects), 'Screening / Data collection');
-  assert.strictEqual(stageLabelFor('screening', [s.projects[1]]), 'Data collection');
+  assert.strictEqual(stageLabelFor('screening', s.projects), 'Screening / Data cleaning');
+  assert.strictEqual(stageLabelFor('screening', [s.projects[1]]), 'Data cleaning');
+  assert.strictEqual(stageLabelFor('search', s.projects), 'Searches / Data collection');
   const prim = filterByType(s, 'primary');
   assert.deepStrictEqual(prim.projects.map((p) => p.id), ['b']);
   assert.strictEqual(prim.tasks.length, 1);
@@ -175,7 +175,14 @@ test('search and data collection details survive saving and loading', () => {
     { id: 'a', title: 'MA', stage: 'search', studyType: 'meta-analysis', search: { databases: 'PubMed, Embase', date: '2026-11-02', found: '1,240', unique: 980, included: 'lots' } },
     { id: 'b', title: 'Cohort', studyType: 'cohort', collection: { ethics: 'M240512', target: '300', collected: ' 120 ' } },
     { id: 'c', title: 'Old save' },
+    { id: 'd', title: 'Old cohort collecting data', stage: 'screening', studyType: 'cohort' },
+    { id: 'e', title: 'New cohort cleaning data', stage: 'screening', studyType: 'cohort', stages2: true },
+    { id: 'f', title: 'Old review screening', stage: 'screening', studyType: 'meta-analysis' },
   ] });
+  assert.deepStrictEqual(s.projects.slice(3).map((p) => p.stage), ['search', 'screening', 'screening']);
+  assert.deepStrictEqual(normalizeState(s).projects.slice(3).map((p) => p.stage), ['search', 'screening', 'screening']);
+  const fresh = { ...newProject('New cohort'), studyType: 'cohort', stage: 'screening' };
+  assert.strictEqual(normalizeState({ projects: [JSON.parse(JSON.stringify(fresh))] }).projects[0].stage, 'screening');
   assert.strictEqual(s.projects[0].stage, 'search');
   assert.deepStrictEqual(s.projects[0].search, { databases: 'PubMed, Embase', date: '2026-11-02', found: '1240', unique: '980', included: '' });
   assert.deepStrictEqual(s.projects[1].collection, { ethics: 'M240512', ethicsDate: '', sites: '', target: '300', collected: '120' });

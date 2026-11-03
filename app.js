@@ -57,7 +57,7 @@
   }
   const FAMILY_LABEL = { review: 'Reviews', primary: 'Primary studies' };
   // Primary studies move through the same six steps, named for their own workflow.
-  const PRIMARY_STAGE_LABELS = { search: 'Ethics approval', screening: 'Data collection', extraction: 'Analysis' };
+  const PRIMARY_STAGE_LABELS = { protocol: 'Protocol & ethics', search: 'Data collection', screening: 'Data cleaning', extraction: 'Analysis' };
   const STORAGE_KEY = 'research-tracker:v1';
   const WEEK_DAYS = 7;
   const REVISION_WINDOW_DAYS = 14;
@@ -143,6 +143,7 @@
       id: uid(),
       title: title || 'Untitled project',
       stage: 'idea',
+      stages2: true,
       studyType: '',
       team: [],
       nextAction: '',
@@ -170,6 +171,14 @@
     return /^\d+$/.test(n) ? String(Number(n)) : '';
   };
 
+  // Before the Searches stage existed, a primary study's "Data collection" was stored as 'screening';
+  // those saves have no stages2 flag, so move them to the stage now called Data collection.
+  function stageFrom(p) {
+    const stage = STAGE_IDS.includes(p.stage) ? p.stage : 'idea';
+    if (!p.stages2 && stage === 'screening' && (studyType(p.studyType) || {}).family === 'primary') return 'search';
+    return stage;
+  }
+
   // Fills defaults and drops malformed rows, so older saves and imported files are safe to render.
   function normalizeState(raw) {
     const src = raw && typeof raw === 'object' ? raw : {};
@@ -183,7 +192,7 @@
           ...newProject(),
           id: String(p.id),
           title: str(p.title) || 'Untitled project',
-          stage: STAGE_IDS.includes(p.stage) ? p.stage : 'idea',
+          stage: stageFrom(p),
           studyType: TYPE_IDS.includes(p.studyType) ? p.studyType : '',
           team: (Array.isArray(p.team) ? p.team : [])
             .filter((m) => m && str(m.name).trim())
@@ -195,6 +204,7 @@
           search: { databases: str(sr.databases), date: date(sr.date), found: count(sr.found), unique: count(sr.unique), included: count(sr.included) },
           collection: { ethics: str(dc.ethics), ethicsDate: date(dc.ethicsDate), sites: str(dc.sites), target: count(dc.target), collected: count(dc.collected) },
           notes: str(p.notes),
+          stages2: true,
           ownerId: str(p.ownerId),
           createdAt: str(p.createdAt) || new Date().toISOString(),
           updatedAt: str(p.updatedAt) || new Date().toISOString(),
