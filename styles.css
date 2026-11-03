@@ -843,3 +843,7 @@ html.in-app, html.in-app body { overscroll-behavior: none; }
 .collect-bar { flex: 1; height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .collect-bar i { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
 @media (max-width: 760px) { .search-grid .search-dbs { grid-column: auto; } }
+
+/* iPhone: date boxes ignore width:100% and spill out of their card; keep them inside and the same height as text boxes. */
+input[type="date"] { -webkit-appearance: none; appearance: none; max-width: 100%; min-width: 0; min-height: 2.4em; display: block; }
+input[type="date"]::-webkit-date-and-time-value { text-align: left; }
