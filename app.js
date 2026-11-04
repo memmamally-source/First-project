@@ -2284,6 +2284,20 @@
 
   const ROLE_BADGE = { first: 'First author', coauthor: 'Co-author', contributor: 'Contributor', assigned: 'Not on team · has work' };
 
+  // Headcount for the People page. Someone who is first author on one paper and co-author on
+  // another counts once in the total and once under each role they hold.
+  function peopleTilesHTML(everyone, paperCount) {
+    const holding = (role) => everyone.filter((x) => x.papers.some((pp) => pp.role === role)).length;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+    return `
+      <section class="tiles" aria-label="People summary">
+        ${tile('People', everyone.length, `across ${plural(paperCount, 'paper')}`)}
+        ${tile('First authors', holding('first'), 'lead at least one paper')}
+        ${tile('Co-authors', holding('coauthor'), 'on at least one paper')}
+        ${tile('Contributors', holding('contributor'), 'acknowledged, not authors')}
+      </section>`;
+  }
+
   function renderPeople() {
     setNav('people');
     const scoped = filterByType(state, ui.typeFilter);
@@ -2338,6 +2352,7 @@
           ${typeFilterControl()}
         </div>
       </header>
+      ${everyone.length ? peopleTilesHTML(everyone, scoped.projects.length) : ''}
       ${!everyone.length
         ? '<section class="empty"><p>Nobody yet. Add authors and contributors on each project page, under Team.</p></section>'
         : byPaper
