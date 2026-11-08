@@ -847,3 +847,28 @@ html.in-app, html.in-app body { overscroll-behavior: none; }
 /* iPhone: date boxes ignore width:100% and spill out of their card; keep them inside and the same height as text boxes. */
 input[type="date"] { -webkit-appearance: none; appearance: none; max-width: 100%; min-width: 0; min-height: 2.4em; display: block; }
 input[type="date"]::-webkit-date-and-time-value { text-align: left; }
+
+/* Phone header: logo and name, with account, backup and help tucked behind one button. */
+.menu-btn { display: none; }
+@media (max-width: 760px) {
+  .sidebar { position: sticky; top: 0; z-index: 35; flex-wrap: nowrap; padding-bottom: 10px; align-self: start; }
+  .menu-btn {
+    display: grid; place-items: center; margin-left: auto; width: 36px; height: 36px; padding: 0;
+    border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2); cursor: pointer;
+  }
+  .menu-btn svg { width: 20px; height: 20px; }
+  .menu-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .sidebar-foot { display: none; }
+  .sidebar.menu-open .sidebar-foot {
+    display: flex; position: absolute; top: calc(100% + 6px); right: 12px; left: auto; width: min(280px, calc(100vw - 24px));
+    flex-direction: column; align-items: stretch; gap: 0; padding: 6px; font-size: 0.95rem;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 32px rgba(15, 39, 71, 0.18);
+  }
+  .sidebar.menu-open .account { flex-direction: column; align-items: stretch; gap: 0; width: 100%; padding: 0; margin: 0 0 4px; border-bottom: 1px solid var(--grid); }
+  .sidebar.menu-open .account-name { padding: 10px 12px 8px; }
+  .sidebar.menu-open .sidebar-foot .link-btn,
+  .sidebar.menu-open .foot-links a { display: block; text-align: left; padding: 10px 12px; border-radius: 8px; font-size: 0.95rem; }
+  .sidebar.menu-open .sidebar-foot .link-btn:active { background: var(--surface-2); }
+  .sidebar.menu-open .foot-links { display: flex; gap: 0; font-size: 0; border-top: 1px solid var(--grid); margin-top: 4px; padding-top: 4px; }
+  .sidebar.menu-open .app-version { padding: 6px 12px 4px; }
+}
