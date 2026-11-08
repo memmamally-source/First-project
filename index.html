@@ -79,6 +79,9 @@
         </span>
         <span class="brand-text">Research Project Tracker<span class="brand-author">Dr M. Emmamally</span></span>
       </a>
+      <button class="menu-btn" data-action="toggle-menu" aria-expanded="false" aria-controls="sidebar-foot" aria-label="Account and settings">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="7" r="3.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3.8 16.6c.9-3 3.3-4.6 6.2-4.6s5.3 1.6 6.2 4.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
       <nav class="nav">
         <a data-nav="home" href="#/">
           <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg>
@@ -99,7 +102,7 @@
         </a>
       </nav>
       <button class="btn primary new-btn" data-action="new-project">+ New project</button>
-      <div class="sidebar-foot">
+      <div class="sidebar-foot" id="sidebar-foot">
         <div class="account" id="account" hidden>
           <span class="account-name" id="account-name"></span>
           <button class="link-btn" data-action="sign-out">Sign out</button>

@@ -2848,6 +2848,7 @@
 
   function route() {
     hideTip();
+    setMenu(false);
     const hash = location.hash || '#/';
     const moved = hash !== ui.hash;
     ui.hash = hash;
@@ -2889,6 +2890,13 @@
     route();
   }
 
+  function setMenu(open) {
+    const btn = document.querySelector('.menu-btn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    document.querySelector('.sidebar').classList.toggle('menu-open', open);
+  }
+
   function onClick(e) {
     if (e.target.closest('[data-close-due]')) closeDue();
     const row = e.target.closest('tr[data-href]');
@@ -2897,11 +2905,15 @@
       return;
     }
     const el = e.target.closest('[data-action]');
+    // Phone account menu: any tap outside it, or on one of its buttons, closes it.
+    if (!(el && el.dataset.action === 'toggle-menu') && !(e.target.closest('#sidebar-foot') && !el)) setMenu(false);
     if (!el) return;
     const a = el.dataset.action;
     const p = currentProject();
 
-    if (a === 'new-project') {
+    if (a === 'toggle-menu') {
+      setMenu(el.getAttribute('aria-expanded') !== 'true');
+    } else if (a === 'new-project') {
       askDialog({
         title: 'New project',
         input: { label: 'Project title', placeholder: 'e.g. Telehealth adoption in rural primary care' },
