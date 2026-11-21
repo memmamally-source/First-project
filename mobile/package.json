@@ -5,7 +5,7 @@
   "scripts": {
     "web": "node copy-web.js",
     "sync": "node copy-web.js && cap sync",
-    "assets": "capacitor-assets generate --ios --iconBackgroundColor '#0f2747' --iconBackgroundColorDark '#0f2747' --splashBackgroundColor '#0f2747' --splashBackgroundColorDark '#0f2747'"
+    "assets": "capacitor-assets generate --ios --iconBackgroundColor '#f3eee4' --iconBackgroundColorDark '#f3eee4' --splashBackgroundColor '#f3eee4' --splashBackgroundColorDark '#0f2747'"
   },
   "dependencies": {
     "@capacitor/core": "8.5.3",
